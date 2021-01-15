@@ -39,7 +39,7 @@ def vector_couloumb(x, y, pos_pair, k=0.05, q1=1, q2=1):
 
 #Batch-Wise
 #x, y have dims B * N, where B=bsz and N= latent_feature_dimensions
-def infoNCE(x, y):
+def nce_loss(x, y):
     #sim matrix dims = B * B, and hold pairwise (per sample) dot-product similarity for x, y views
     #pos_pairs dims = N, and specify which indices correspond to positive-pair dot products per sample in x
 
