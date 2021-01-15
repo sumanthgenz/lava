@@ -255,21 +255,16 @@ class BYOLEncoder(torch.nn.Module):
         #encoded views
         return a, v
     
-    def loss(self, x_online, y_online):
-        cos_loss = cosine_loss(x_online, y_target) + cosine_loss(x_target, y_online)
-        kl_loss = kldiv_loss(x_online, y_target) + kl_div_loss(x_target, y_online)
-        rand_loss = random_loss(x_online, y_target) + random_loss(x_target, y_online)
-
-        total_loss = torch.zeros([]).cuda()
-        total_loss += self._cosine_loss_weight * cos_loss 
-        total_loss += self._kldiv_loss_weight * kl_loss 
-        total_loss += self._random_loss_weight * rand_loss 
+    def loss(self, a, v):
+        audio_nce_loss = nce_loss(a, v) 
+        video_nce_loss = nce_loss(v, a)
+        total_loss = (audio_loss + video_loss)*0.5
+                                                                             
 
         metrics = {
-            'cosine_loss': cos_loss,
-            'kldiv_loss': kl_loss,
-            'random_loss': rand_loss,
-            'total_loss': total_loss
+            'audio_nce_loss': audio_nce_loss,
+            'video_nce_loss': video_nce_loss,
+            'total_loss': total_loss,
         }
 
         return metrics
