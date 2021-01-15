@@ -121,15 +121,11 @@ class BYOLEncoder(torch.nn.Module):
                 dropout=0.1,
                 model_dimension=128, 
                 feat_dimension=512,
-                seqlen=277,
+                seqlen=300,
                 batch_size=5, 
                 learning_rate=1e-3,
                 num_heads=4, 
-                num_layers=4, 
-                ema_beta=0.95,
-                cos_loss_weight=0.5,
-                kldiv_loss_weight=0.45,
-                random_loss_weight=0.05):
+                num_layers=4,)
 
         super(BYOLEncoder, self).__init__()
 
@@ -189,12 +185,6 @@ class BYOLEncoder(torch.nn.Module):
             torch.nn.Linear(self._model_dimension, self._model_dimension),
         )
 
-        self._target_encoder = None
-        self._target_networks_initialized = False
-        self._ema_beta = ema_beta
-        self._cosine_loss_weight = cosine_loss_weight
-        self._kldiv_loss_weight = kldiv_loss_weight
-        self._random_loss_weight = random_loss_weight
         self._learning_rate = learning_rate
 
     def get_temporal_modality_views(self, audio, video):
@@ -215,38 +205,14 @@ class BYOLEncoder(torch.nn.Module):
         params += list(self._video_feature_model.parameters())
         params += list(self._frame_input_projection.parameters())
         params += list(self._encoder.parameters())
-        if self._target_encoder is not None:
-            params += list(self._target_encoder.parameters())
         params += list(self._representation_mlp.parameters())
         params += list(self._byol_predictor.parameters())
         params += list(self._translation_mlp.parameters())
 
         return params
 
-    def reset_moving_average(self):
-        del self._target_encoder
-        self._target_encoder = None
-
-
-    def _ema_copy_model(self, online_model, target_model):
-        for current_params, target_params in zip(online_model.parameters(), target_model.parameters()):
-            old_weight, new_weight = target_params.data, current_params.data
-            target_params.data = old_weight * self._ema_beta + (1 - self._ema_beta) * new_weight
-
-
-    def update_moving_average(self):
-        if self._target_encoder is not None:
-            self._ema_copy_model(self._encoder, self._target_encoder)
-
-
-    def byol_encode(self, x, online=True):
-        if online:
-            x = self._encoder(x)
-        else:
-            if not self._target_networks_initialized:
-                self._target_encoder = copy.deepcopy(self._encoder)
-                self._target_networks_initialized = True
-            x = self._target_encoder(x)
+    def _encode(self, x):
+        x = self._encoder(x)
         x = self._representation_mlp(x)
         return x
     
@@ -254,7 +220,7 @@ class BYOLEncoder(torch.nn.Module):
         return self._frame_input_projection(x.reshape(-1, self._feature_dimension)).reshape(
             x.shape[0], x.shape[1], self._model_dimension)
 
-    def _encode_sequence(self, seq, seqlen, online=True):
+    def _encode_sequence(self, seq, seqlen):
         if online:
             encoded = self._encoder(
                 src=seq,
@@ -280,31 +246,11 @@ class BYOLEncoder(torch.nn.Module):
     def forward(self, a, v):
         # a, v = x
 
-        a = self._audio_feature_model(a)
-        v = self._video_feature_model(v)
+        a, v = self._audio_feature_model(a), self._video_feature_model(v)
+        a, v = self._feature_project(x), self._feature_project(y)
+        a, v = self._encode_sequence(x,self._seqlen,), self._encode_sequence(y,self._seqlen,)
 
-        #x, y are temporally-ordered cross-modal views of source video
-        x, y = self.get_temporal_modality_views(a,v)
 
-        x, y = self._feature_project(x), self._feature_project(y)
-        x_online = self._encode_sequence(x,
-                                        self._seqlen,
-                                        online=True,)
-
-        y_online = self._encode_sequence(y,
-                                        self._seqlen,
-                                        online=True,)
-
-        # x_online, y_online = self._encoder(x), self._encoder(y)
-
-        with torch.no_grad():
-            x_target = self._encode_sequence(x,
-                                    self._seqlen,
-                                    online=False,)
-
-            y_target = self._encode_sequence(y,
-                                            self._seqlen,
-                                            online=False,)
 
 
         x_online = self._byol_predictor(x_online.reshape(
@@ -316,13 +262,10 @@ class BYOLEncoder(torch.nn.Module):
         x_online = torch.nn.functional.normalize(x_online, p=2, dim=-1)
         y_online = torch.nn.functional.normalize(y_online, p=2, dim=-1)
 
-        x_target = torch.nn.functional.normalize(x_target, p=2, dim=-1) 
-        y_target = torch.nn.functional.normalize(y_target, p=2, dim=-1)
-
         #byol-encoded views
-        return x_online, y_online, x_target, y_target
+        return x_online, y_online
     
-    def loss(self, x_online, y_online, x_target, y_target):
+    def loss(self, x_online, y_online):
         cos_loss = cosine_loss(x_online, y_target) + cosine_loss(x_target, y_online)
         kl_loss = kldiv_loss(x_online, y_target) + kl_div_loss(x_target, y_online)
         rand_loss = random_loss(x_online, y_target) + random_loss(x_target, y_online)
