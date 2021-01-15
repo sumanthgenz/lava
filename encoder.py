@@ -150,8 +150,14 @@ class BYOLEncoder(torch.nn.Module):
 
         self._video_token = torch.randn(self._batch_size, 1, self._feature_dimension)
 
+        
+        self._audio_input_projection = torch.nn.Sequential(
+            torch.nn.BatchNorm1d(self._feature_dimension),
+            torch.nn.Linear(self._feature_dimension, self._model_dimension),
+            torch.nn.ReLU(),
+        )
 
-        self._frame_input_projection = torch.nn.Sequential(
+        self._video_input_projection = torch.nn.Sequential(
             torch.nn.BatchNorm1d(self._feature_dimension),
             torch.nn.Linear(self._feature_dimension, self._model_dimension),
             torch.nn.ReLU(),
@@ -162,25 +168,23 @@ class BYOLEncoder(torch.nn.Module):
                                                                  dim_feedforward=self._model_dimension,
                                                                  dropout=self._dropout,
                                                                  activation='relu')
-        self._encoder = torch.nn.modules.TransformerEncoder(encoder_layer=self._encoder_layer,
+        
+        self._audio_encoder = torch.nn.modules.TransformerEncoder(encoder_layer=self._encoder_layer,
                                                                     num_layers=self._num_layers)
+        
+        self._video_encoder = torch.nn.modules.TransformerEncoder(encoder_layer=self._encoder_layer,
+                                                                    num_layers=self._num_layers)        
 
 
-        self._representation_mlp = torch.nn.Sequential(
+        self._audio_representation_mlp = torch.nn.Sequential(
             torch.nn.Linear(self._model_dimension, self._model_dimension),
             torch.nn.BatchNorm1d(self._model_dimension),
             torch.nn.ReLU(),
             torch.nn.Linear(self._model_dimension, self._model_dimension),
         )
-        self._byol_predictor = torch.nn.Sequential(
+        self._video_representation_mlp = torch.nn.Sequential(
             torch.nn.Linear(self._model_dimension, self._model_dimension),
             torch.nn.BatchNorm1d(self._model_dimension),
-            torch.nn.ReLU(),
-            torch.nn.Linear(self._model_dimension, self._model_dimension),
-        )
-
-        self._translation_mlp = torch.nn.Sequential(
-            torch.nn.Linear(2*self._model_dimension, self._model_dimension),
             torch.nn.ReLU(),
             torch.nn.Linear(self._model_dimension, self._model_dimension),
         )
@@ -211,59 +215,45 @@ class BYOLEncoder(torch.nn.Module):
 
         return params
 
-    def _encode(self, x):
-        x = self._encoder(x)
-        x = self._representation_mlp(x)
-        return x
     
-    def _feature_project(self, x):
-        return self._frame_input_projection(x.reshape(-1, self._feature_dimension)).reshape(
-            x.shape[0], x.shape[1], self._model_dimension)
+    def _feature_project(self, x, mode):
+        if mode=='audio':
+            x = self._audio_feature_model(x)
+            return self._audio_input_projection(x.reshape(-1, self._feature_dimension)).reshape(
+                x.shape[0], x.shape[1], self._model_dimension)
+        
+        x = self._video_feature_model(x)
+        return self._video_input_projection(x.reshape(-1, self._feature_dimension)).reshape(
+                x.shape[0], x.shape[1], self._model_dimension)
 
-    def _encode_sequence(self, seq, seqlen):
-        if online:
-            encoded = self._encoder(
-                src=seq,
-                mask=get_src_conditional_mask(seq.shape[0]).to(seq.device),
-            ).transpose(0, 1)
+    def _encode_sequence(self, seq, seqlen, mode):
+        if mode=='audio':
+            encoder = self._audio_encoder
+            mlp = self._audio_representation_mlp
         else:
-            if not self._target_networks_initialized:
-                self._target_encoder = copy.deepcopy(self._encoder)
-                self._target_networks_initialized = True
-
-            #transpose [N * T * D] -> [T * N * D] as input to  batchnorm for representation_mlp
-            encoded = self._target_encoder(
-                src=seq,
-                mask=get_src_conditional_mask(seq.shape[0]).to(seq.device),
-            ).transpose(0, 1)
-
+            encoder = self._video_encoder
+            mlp = self._video_representation_mlp
+        encoded = encoder(
+            src=seq,
+            mask=get_src_conditional_mask(seq.shape[0]).to(seq.device),
+        ).transpose(0, 1)
+  
         #transpose [T * N * D] -> [N * T * D] after mlp
-        encoded = self._representation_mlp(encoded.reshape(
+        encoded = mlp(encoded.reshape(
             -1, self._model_dimension)).reshape(*encoded.shape).transpose(0,1)
 
         return encoded
     
-    def forward(self, a, v):
-        # a, v = x
+    def forward(self, batch):
+        a,v = batch
+        a, v = self._feature_project(x, mode='audio'), self._feature_project(y, mode='video)
+        a, v = self._encode_sequence(x,self._seqlen, mode='audio'), self._encode_sequence(y,self._seqlen, mode='video')
 
-        a, v = self._audio_feature_model(a), self._video_feature_model(v)
-        a, v = self._feature_project(x), self._feature_project(y)
-        a, v = self._encode_sequence(x,self._seqlen,), self._encode_sequence(y,self._seqlen,)
+        a = torch.nn.functional.normalize(x_online, p=2, dim=-1)
+        v = torch.nn.functional.normalize(y_online, p=2, dim=-1)
 
-
-
-
-        x_online = self._byol_predictor(x_online.reshape(
-            -1, self._model_dimension)).reshape(*x_online.shape)
-
-        y_online = self._byol_predictor(y_online.reshape(
-            -1, self._model_dimension)).reshape(*y_online.shape)
-
-        x_online = torch.nn.functional.normalize(x_online, p=2, dim=-1)
-        y_online = torch.nn.functional.normalize(y_online, p=2, dim=-1)
-
-        #byol-encoded views
-        return x_online, y_online
+        #encoded views
+        return a, v
     
     def loss(self, x_online, y_online):
         cos_loss = cosine_loss(x_online, y_target) + cosine_loss(x_target, y_online)
