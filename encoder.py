@@ -115,7 +115,7 @@ class VideoFeatureModel(torch.nn.Module):
         return frames_encoded
 
 #Contains implementation from https://github.com/CannyLab/aai/blob/ddc76404bdfe15fb8218c31d9dc6859f3d5420db/aai/research/gptcaptions/models/encoders/predictive_byol.py
-class BYOLEncoder(torch.nn.Module):
+class CAVE(torch.nn.Module):
 
     def __init__(self, 
                 dropout=0.1,
@@ -127,7 +127,7 @@ class BYOLEncoder(torch.nn.Module):
                 num_heads=4, 
                 num_layers=4,)
 
-        super(BYOLEncoder, self).__init__()
+        super(CAVE, self).__init__()
 
         self._model_dimension = model_dimension
         self._feature_dimension = feat_dimension
