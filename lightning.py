@@ -23,7 +23,7 @@ class VideoBYOLightning(pl.LightningModule):
     def __init__(self,):
         super().__init__()
 
-        self.encoder = BYOLEncoder()
+        self.encoder = CAVE()
 
     # Handle BYOL component: Implemetation from https://github.com/CannyLab/aai/blob/main/aai/research/gptcaptions/driver.py
     def on_before_zero_grad(self, _):
@@ -32,59 +32,55 @@ class VideoBYOLightning(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         audio, video = batch
-        x_online, y_online, x_target, y_target = self.encoder(audio, video)
-        metrics = self.encoder.loss(x_online, y_online, x_target, y_target)
+        audio_encoded, video_encoded = self.encoder(audio, video)
+        metrics = self.encoder.loss(audio_encoded, video_encoded)
 
         return {'loss': metrics['total_loss'],
                 'logs': metrics}
 
     def validation_step(self, batch, batch_idx):
         audio, video = batch
-        x_online, y_online, x_target, y_target = self.encoder(audio, video)
-        metrics = self.encoder.loss(x_online, y_online, x_target, y_target)
+        audio_encoded, video_encoded = self.encoder(audio, video)
+        metrics = self.encoder.loss(audio_encoded, video_encoded)
 
         return {'val_total_loss': metrics['total_loss'],
-                'val_cosine_loss': metrics['cosine_loss'],
-                'val_kldiv_loss': metrics['kldiv_loss'],
-                'val_random_loss': metrics['random_loss'],}
-
+                'val_audio_loss': metrics['audio_loss'],
+                'val_video_loss': metrics['video_loss'],}
+    
     def test_step(self, batch, batch_idx):
         audio, video = batch
-        x_online, y_online, x_target, y_target = self.encoder(audio, video)
-        metrics = self.encoder.loss(x_online, y_online, x_target, y_target)
+        audio_encoded, video_encoded = self.encoder(audio, video)
+        metrics = self.encoder.loss(audio_encoded, video_encoded)
 
         return {'test_total_loss': metrics['total_loss'],
-                'test_cosine_loss': metrics['cosine_loss'],
-                'test_kldiv_loss': metrics['kldiv_loss'],
-                'test_random_loss': metrics['random_loss'],}
+                'test_audio_loss': metrics['audio_loss'],
+                'test_video_loss': metrics['video_loss'],}
 
     
     def validation_epoch_end(self, outputs):
         avg_total_loss = torch.stack([m['val_total_loss'] for m in outputs]).mean()
-        avg_cosine_loss = torch.stack([m['val_cosine_loss'] for m in outputs]).mean()
-        avg_kldiv_loss = torch.stack([m['val_kldiv_loss'] for m in outputs]).mean()
-        avg_random_loss = torch.stack([m['val_random_loss'] for m in outputs]).mean()
+        avg_audio_loss = torch.stack([m['val_audio_loss'] for m in outputs]).mean()
+        avg_video_loss = torch.stack([m['val_video_loss'] for m in outputs]).mean()
 
         logs = {'val_total_loss': avg_total_loss,
-                'val_cosine_loss': avg_cosine_loss,
-                'val_kldiv_loss': avg_kldiv_loss,
-                'val_random_loss': avg_random_loss,}
-
+                'val_audio_loss': avg_audio_loss,
+                'val_video_loss': avg_video_loss,}
+        
         return {'val_total_loss': avg_total_loss, 'log': logs}
 
     def train_dataloader(self):
         dataset = AudioVisualData(data_type='train')
         return torch.utils.data.DataLoader(
-                                dataset,
-                                batch_size=self.encoder._batch_size,
-                                shuffle=True,
-                                num_workers=8)
+                                    dataset,
+                                    batch_size=self.encoder._batch_size,
+                                    shuffle=True,
+                                    num_workers=8)
 
     def val_dataloader(self):
           dataset = AudioVisualData(data_type='val')
           return torch.utils.data.DataLoader(
                                   dataset,
-                                batch_size=self.encoder._batch_size,
+                                  batch_size=self.encoder._batch_size,
                                   shuffle=False,
                                   collate_fn=self.collate_fn,
                                   num_workers=8)
