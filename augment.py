@@ -84,6 +84,8 @@ def get_audiovisual(path):
     aud = pad_spec(aud)
     vid = torch.from_numpy(resize_video(vid, target_size=(128,128))).type(dtype=torch.float32)
     vid = torch.reshape(vid, (vid.size(-1), vid.size(0), vid.size(1), vid.size(2)))
+    aud = nan_filter(aud)
+    vid = nan_filter(vid)
 
     #aud shape: [T * M], where M = 128, T ~ 2000
     #vid shape: [C * T * H * W], where T <= 300, H = W = 128, C = 3

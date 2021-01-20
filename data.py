@@ -250,9 +250,9 @@ if __name__ == '__main__':
     audio_model = AudioFeatureModel()
     video_model = VideoFeatureModel()
 
-    byol_model = BYOLEncoder()
+    model = CAVE(batch_size=5)
 
-    ad = AudioVisualData("train")
+    ad = AudioVisualData("val")
     for i in tqdm(range(1)):
         # a, v = ad.__getitem__(1)
 
@@ -265,41 +265,12 @@ if __name__ == '__main__':
         a = torch.stack((a1, a2, a3, a4, a5))
         v = torch.stack((v1, v2, v3, v4, v5))
 
-        # a = torch.stack((a1, a2))
-        # v = torch.stack((v1, v2))
-
-        # v = v.reshape((2, 300, 128, 128, 3))
-        # video_frames = torch.einsum('bcthw->(b*t)thw)', [v])
-
-        # video_frames = v.reshape(v.shape[0]*v.shape[2], v.shape[1], v.shape[3], v.shape[3])
-        # video_frames = v
-
-        # frames_encoded = feature_model(video_frames.contiguous())
-        # frames_encoded = frames_encoded.reshape(v.shape[0], -1,
-        #                                         *frames_encoded.shape[1:]).mean(dim=(3, 4))
-
-        # print(frames_encoded.shape)
-
-        # a = audio_model(a)
-        # v = video_model(v)
-        view1, view2 = byol_model(a,v)
+        view1, view2 = model(a,v)
+        loss = model.loss(view1, view2)
 
         print(view1)
         print(view2)
         print(view1.shape)
         print(view2.shape)
+        print(loss)
 
-        # v = video_conv(v).squeeze()
-        # v = fc(v.view(v.size(0), v.size(1), video_feat_dim**2))
-        # v = torch.einsum('ntd->ndt', [v])
-
-        # a = audio_conv(a.unsqueeze(0))
-        # print(a)
-        # print(a.shape)
-
-        # v = video_conv(v.unsqueeze(0))
-        # print(v)
-        # a = torch.cat((start,a), dim=1)
-
-        # print(a.shape)
-        # print(v.shape)

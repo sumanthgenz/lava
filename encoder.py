@@ -125,7 +125,7 @@ class CAVE(torch.nn.Module):
                 batch_size=5, 
                 learning_rate=1e-3,
                 num_heads=4, 
-                num_layers=4,)
+                num_layers=4,):
 
         super(CAVE, self).__init__()
 
@@ -195,8 +195,8 @@ class CAVE(torch.nn.Module):
         a1, a2 = torch.split(audio, split_size_or_sections=audio.shape[1]//2, dim=1) 
         v1, v2 = torch.split(video, split_size_or_sections=video.shape[1]//2, dim=1)
 
-        a1, a2 = torch.cat((self._audio_token, a1), dim=1), torch.cat((self._audio_token, a2), dim=1)
-        v1, v2 = torch.cat((self._video_token, v1), dim=1), torch.cat((self._video_token, v2), dim=1)
+        a1, a2 = torch.cat((self._audio_token.to(a1.device), a1), dim=1), torch.cat((self._audio_token.to(a2.device), a2), dim=1)
+        v1, v2 = torch.cat((self._video_token.to(v1.device), v1), dim=1), torch.cat((self._video_token.to(v2.device), v2), dim=1)
 
         view1 = torch.cat((a1, v2), dim=1)
         view2 = torch.cat((v1, a2), dim=1)
@@ -207,11 +207,12 @@ class CAVE(torch.nn.Module):
         params = []
         params += list(self._audio_feature_model.parameters())
         params += list(self._video_feature_model.parameters())
-        params += list(self._frame_input_projection.parameters())
-        params += list(self._encoder.parameters())
-        params += list(self._representation_mlp.parameters())
-        params += list(self._byol_predictor.parameters())
-        params += list(self._translation_mlp.parameters())
+        params += list(self._audio_input_projection.parameters())
+        params += list(self._video_input_projection.parameters())
+        params += list(self._audio_encoder.parameters())
+        params += list(self._video_encoder.parameters())
+        params += list(self._audio_representation_mlp.parameters())
+        params += list(self._video_representation_mlp.parameters())
 
         return params
 
@@ -238,32 +239,32 @@ class CAVE(torch.nn.Module):
             mask=get_src_conditional_mask(seq.shape[0]).to(seq.device),
         ).transpose(0, 1)
   
-        #transpose [T * N * D] -> [N * T * D] after mlp
+        #transpose [T * N * D] -> [N * T * D] after mlp, mean pool to [N * D]
         encoded = mlp(encoded.reshape(
-            -1, self._model_dimension)).reshape(*encoded.shape).transpose(0,1)
+            -1, self._model_dimension)).reshape(*encoded.shape).transpose(0,1).mean(dim=1)
 
         return encoded
     
-    def forward(self, batch):
-        a,v = batch
-        a, v = self._feature_project(x, mode='audio'), self._feature_project(y, mode='video)
-        a, v = self._encode_sequence(x,self._seqlen, mode='audio'), self._encode_sequence(y,self._seqlen, mode='video')
+    def forward(self, a, v):
+        # a,v = batch
+        a, v = self._feature_project(a, mode='audio'), self._feature_project(v, mode='video')
+        a, v = self._encode_sequence(a,self._seqlen, mode='audio'), self._encode_sequence(v,self._seqlen, mode='video')
 
-        a = torch.nn.functional.normalize(x_online, p=2, dim=-1)
-        v = torch.nn.functional.normalize(y_online, p=2, dim=-1)
+        a = torch.nn.functional.normalize(a, p=2, dim=-1)
+        v = torch.nn.functional.normalize(v, p=2, dim=-1)
 
         #encoded views
         return a, v
     
     def loss(self, a, v):
-        audio_nce_loss = nce_loss(a, v) 
-        video_nce_loss = nce_loss(v, a)
-        total_loss = (audio_loss + video_loss)*0.5
+        audio_loss = nce_loss(a, v) 
+        video_loss = nce_loss(v, a)
+        total_loss = audio_loss + video_loss
                                                                              
 
         metrics = {
-            'audio_nce_loss': audio_nce_loss,
-            'video_nce_loss': video_nce_loss,
+            'audio_loss': audio_loss,
+            'video_loss': video_loss,
             'total_loss': total_loss,
         }
 

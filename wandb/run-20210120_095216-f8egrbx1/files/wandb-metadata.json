@@ -1,0 +1,24 @@
+{
+    "os": "Linux-4.15.0-132-generic-x86_64-with-debian-stretch-sid",
+    "python": "3.7.9",
+    "heartbeatAt": "2021-01-20T17:52:17.318809",
+    "startedAt": "2021-01-20T17:52:16.621992",
+    "docker": null,
+    "gpu": "TITAN X (Pascal)",
+    "gpu_count": 2,
+    "cpu_count": 16,
+    "cuda": "9.2.148",
+    "args": [],
+    "state": "running",
+    "codePath": "train.py",
+    "program": "/home/sgurram/Projects/cave_ml/train.py",
+    "git": {
+        "remote": "https://github.com/sumanthgenz/cave_ml.git",
+        "commit": "b548f832ae858e4f3d1a0bc535223bc1782f917a"
+    },
+    "email": "sumanthgenz@gmail.com",
+    "root": "/home/sgurram/Projects/cave_ml",
+    "host": "stout",
+    "username": "sgurram",
+    "executable": "/home/sgurram/anaconda3/envs/torch_env/bin/python"
+}

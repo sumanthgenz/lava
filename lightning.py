@@ -18,24 +18,20 @@ import os
 
 from encoder import *
 
-class VideoBYOLightning(pl.LightningModule):
+class CAVELightning(pl.LightningModule):
 
     def __init__(self,):
         super().__init__()
 
         self.encoder = CAVE()
 
-    # Handle BYOL component: Implemetation from https://github.com/CannyLab/aai/blob/main/aai/research/gptcaptions/driver.py
-    def on_before_zero_grad(self, _):
-        self.model.update_moving_average()
-
-
     def training_step(self, batch, batch_idx):
         audio, video = batch
         audio_encoded, video_encoded = self.encoder(audio, video)
         metrics = self.encoder.loss(audio_encoded, video_encoded)
+        loss = metrics['total_loss']
 
-        return {'loss': metrics['total_loss'],
+        return {'loss': loss,
                 'logs': metrics}
 
     def validation_step(self, batch, batch_idx):
@@ -69,7 +65,7 @@ class VideoBYOLightning(pl.LightningModule):
         return {'val_total_loss': avg_total_loss, 'log': logs}
 
     def train_dataloader(self):
-        dataset = AudioVisualData(data_type='train')
+        dataset = AudioVisualData(dataType='train')
         return torch.utils.data.DataLoader(
                                     dataset,
                                     batch_size=self.encoder._batch_size,
@@ -77,17 +73,16 @@ class VideoBYOLightning(pl.LightningModule):
                                     num_workers=8)
 
     def val_dataloader(self):
-          dataset = AudioVisualData(data_type='val')
+          dataset = AudioVisualData(dataType='val')
           return torch.utils.data.DataLoader(
                                   dataset,
                                   batch_size=self.encoder._batch_size,
                                   shuffle=False,
-                                  collate_fn=self.collate_fn,
                                   num_workers=8)
 
     #test clipped folder does not exist on stout
     # def test_dataloader(self):
-    #     dataset = AudioVisualData(data_type='test')
+    #     dataset = AudioVisualData(dataType='test')
     #     return torch.utils.data.DataLoader(
     #                             dataset,
     #                             batch_size=self.encoder._batch_size,

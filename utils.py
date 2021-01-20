@@ -1,7 +1,16 @@
+import cv2
+import av
 import torch
 import torchaudio
 import torchvision
 import torch.nn as nn
+import numpy as np
+from typing import Tuple, Optional
+
+def nan_filter(input):
+    input[torch.isinf(input)] = 0
+    input[torch.isnan(input)] = 0
+    return input
 
 #Implementation from https://github.com/CannyLab/aai/blob/main/aai/utils/video/transform.py
 def resize_video(video_frames: np.ndarray, target_size: Tuple[int, int]) -> np.ndarray:
