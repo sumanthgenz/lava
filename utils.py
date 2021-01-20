@@ -47,3 +47,4 @@ def sequence_mask(lengths, maxlen=None, right_aligned=False):
         mask = row_vector > (-matrix + (maxlen - 1))
 
     return mask.bool()
+#test git push stout
