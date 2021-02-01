@@ -29,7 +29,7 @@ class AudioFeatureModel(torch.nn.Module):
         super(AudioFeatureModel, self).__init__()
 
         self.mel_freq = 128
-        self.model_dimension = 512
+        self.model_dimension = model_dimension
         self.time_stpes = 300
 
         #audio convnet 
@@ -47,16 +47,16 @@ class AudioFeatureModel(torch.nn.Module):
                     stride=2,
         )
 
-        self.pool1 = nn.MaxPool1d(
+        self.pool1 = torch.nn.MaxPool1d(
                 kernel_size=2,
                 stride=2,
         )
 
-        self.drop = nn.Dropout(p=0.1)
-        self.relu = nn.ReLU()
-        self.tanh = nn.Tanh()
-        self.bn = nn.BatchNorm1d(num_features=self.model_dimension)
-        self.ln = nn.LayerNorm(normalized_shape=(self.model_dimension, self.time_stpes))
+        self.drop = torch.nn.Dropout(p=0.1)
+        self.relu = torch.nn.ReLU()
+        self.tanh = torch.nn.Tanh()
+        self.bn = torch.nn.BatchNorm1d(num_features=self.model_dimension)
+        self.ln = torch.nn.LayerNorm(normalized_shape=(self.model_dimension, self.time_stpes))
 
         self.audio_conv = nn.Sequential(
                 self.conv1,
@@ -80,13 +80,17 @@ class AudioFeatureModel(torch.nn.Module):
 class VideoFeatureModel(torch.nn.Module):
     def __init__(self, 
                 dropout=0.1, 
-                model_dimension=512):
+                model_dimension=512,
+                seq_len=16,
+                target_len=256):
 
         super(VideoFeatureModel, self).__init__()
 
         self.model_dimension = model_dimension
+        self.seq_len = seq_len
+        self.target_len = target_len
 
-        self.dropout = dropout
+        self.drop = dropout
 
         self.resnet_model = torchvision.models.resnet18(pretrained=True)
 
@@ -101,17 +105,36 @@ class VideoFeatureModel(torch.nn.Module):
             self.resnet_model.layer4,
         )
 
+
+        # 32 -> 256, 256 -> 512
+        self.feature_mlp = torch.nn.Sequential(
+            torch.nn.Dropout(p=self.drop),
+            torch.nn.Linear(self.model_dimension // self.seq_len, self.target_len),
+            torch.nn.BatchNorm1d(self.target_len),
+            torch.nn.ReLU(),
+            torch.nn.Linear(self.target_len, self.model_dimension),
+        )
+
     def forward(self, v):
-        #Input [N * T * H * W * C]
+        #Input [N * C * S * H * W]
 
         # x = x.type(torch.FloatTensor)
-
         video_frames = v.reshape(v.shape[0]*v.shape[2], v.shape[1], v.shape[3], v.shape[3])
+
         frames_encoded = self.feature_model(video_frames.contiguous())
+
+        #Output [N * S * D]
         frames_encoded = frames_encoded.reshape(v.shape[0], -1,
                                                 *frames_encoded.shape[1:]).mean(dim=(3, 4))
 
-        #Output [N * T * D]
+        # [N * T * D/S]
+        frames_encoded = frames_encoded.reshape(v.shape[0], self.target_len, -1)
+
+        print(frames_encoded.shape)
+
+        # [N * T * D]
+        frames_encoded = self.feature_mlp(frames_encoded)
+
         return frames_encoded
 
 #Contains implementation from https://github.com/CannyLab/aai/blob/ddc76404bdfe15fb8218c31d9dc6859f3d5420db/aai/research/gptcaptions/models/encoders/predictive_byol.py
@@ -121,11 +144,11 @@ class CAVE(torch.nn.Module):
                 dropout=0.1,
                 model_dimension=128, 
                 feat_dimension=512,
-                seqlen=300,
-                batch_size=5, 
+                seqlen=256,
+                batch_size=128, 
                 learning_rate=1e-3,
-                num_heads=4, 
-                num_layers=4,):
+                num_heads=8, 
+                num_layers=2,):
 
         super(CAVE, self).__init__()
 
@@ -163,16 +186,22 @@ class CAVE(torch.nn.Module):
             torch.nn.ReLU(),
         )
 
-        self._encoder_layer = torch.nn.modules.TransformerEncoderLayer(d_model=self._model_dimension,
+        self._audio_encoder_layer = torch.nn.modules.TransformerEncoderLayer(d_model=self._model_dimension,
                                                                  nhead=self._num_heads,
                                                                  dim_feedforward=self._model_dimension,
                                                                  dropout=self._dropout,
                                                                  activation='relu')
+
+        self._video_encoder_layer = torch.nn.modules.TransformerEncoderLayer(d_model=self._model_dimension,
+                                                            nhead=self._num_heads,
+                                                            dim_feedforward=self._model_dimension,
+                                                            dropout=self._dropout,
+                                                            activation='relu')
         
-        self._audio_encoder = torch.nn.modules.TransformerEncoder(encoder_layer=self._encoder_layer,
+        self._audio_encoder = torch.nn.modules.TransformerEncoder(encoder_layer=self._audio_encoder_layer,
                                                                     num_layers=self._num_layers)
         
-        self._video_encoder = torch.nn.modules.TransformerEncoder(encoder_layer=self._encoder_layer,
+        self._video_encoder = torch.nn.modules.TransformerEncoder(encoder_layer=self._video_encoder_layer,
                                                                     num_layers=self._num_layers)        
 
 

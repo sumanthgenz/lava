@@ -24,11 +24,11 @@ def kl_divergence(x, y):
     return sum(x[i] * np.log(x[i]/(x[i]+denom_bound)) for i in range(x.size(0)))
 
 def hypersphere_norm(x):
-    return torch.nn.functional.normalize(x, p=2, dim= -1)
+    return torch.nn.functional.normalize(x, p=2, dim=-1)
 
 def l2_distance(x,y):
     # return np.linalg.norm(x-y)
-    return hypersphere_norm(x-y)
+    return hypersphere_norm(x-y).sum()
 
 def vector_couloumb(x, y, pos_pair, k=0.05, q1=1, q2=1):
     force = (k * q1 * q2) / (l2_distance(x, y)**2)
@@ -45,6 +45,16 @@ def nce_loss(x, y):
     sim_matrix = torch.mm(x, y.t())
     pos_pairs = torch.arange(x.size(0)).to(sim_matrix.device)
     loss = torch.nn.functional.cross_entropy(sim_matrix, pos_pairs)
+    return loss
+
+
+def centroid_loss(x, y, z):
+    #compute centroid as arithmetic mean of latent vectors x, y, z
+    centroid = (x * y * z)/3
+    x_loss = hypersphere_norm(x.reshape(-1) - centroid.reshape(-1)).reshape(x.shape[0], -1).sum(-1)
+    y_loss = hypersphere_norm(y.reshape(-1) - centroid.reshape(-1)).reshape(y.shape[0], -1).sum(-1)
+    z_loss = hypersphere_norm(z.reshape(-1) - centroid.reshape(-1)).reshape(z.shape[0], -1).sum(-1)
+    loss = (x_loss + y_loss + z_loss).mean()
     return loss
 
 #x and y normalized to hypersphere 

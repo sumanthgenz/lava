@@ -153,99 +153,11 @@ class AudioVisualData(Dataset):
         filePath = self.wav_paths[idx]
 
         return get_audiovisual(filePath)
+        # return torch.rand(128, 2000), torch.rand(3, 300, 128, 128)
 
 
 
 if __name__ == '__main__':
-
-
-    video_feat_dim = 14
-    audio_feat_dim = 512
-
-    #audio convnet 
-    conv1 = torch.nn.Conv1d(
-                in_channels=128, 
-                out_channels=audio_feat_dim, 
-                kernel_size=2, 
-                stride=2,
-    )
-
-    conv2 = torch.nn.Conv1d(
-                in_channels=audio_feat_dim, 
-                out_channels=audio_feat_dim, 
-                kernel_size=2,
-                stride=2,
-    )
-
-    pool1 = nn.MaxPool1d(
-            kernel_size=2,
-            stride=2
-    )
-
-    audio_conv = nn.Sequential(
-            conv1,
-            conv2,
-            pool1,
-    )
-
-
-
-    #video convnet 
-    conv3 = torch.nn.Conv3d(
-                in_channels=3, 
-                out_channels=64, 
-                kernel_size=[1,4,4],         
-    )
-
-    conv4 = torch.nn.Conv3d(
-                in_channels=64, 
-                out_channels=32, 
-                kernel_size=[1,4,4], 
-    )
-
-    conv5 = torch.nn.Conv3d(
-                in_channels=32, 
-                out_channels=1, 
-                kernel_size=[1,4,4], 
-    )
-
-    pool3 = nn.MaxPool3d(
-                kernel_size=[1,5,5], 
-    )
-    
-    pool4 = nn.MaxPool3d(
-                kernel_size=[1,4,4], 
-                stride=1,
-    )
-
-    pool5 = nn.MaxPool3d(
-                kernel_size=[1,3,3], 
-                stride=1,
-    )
-
-    video_conv = nn.Sequential(
-            conv3,
-            pool3,
-            conv4,
-            pool4,
-            conv5,
-            pool5,
-    )
-
-    fc = nn.Linear(video_feat_dim**2, audio_feat_dim)
-
-    resnet_model = torchvision.models.resnet18(pretrained=True)
-
-    feature_model = torch.nn.Sequential(
-            resnet_model.conv1,
-            resnet_model.bn1,
-            resnet_model.relu,
-            resnet_model.maxpool,
-            resnet_model.layer1,
-            resnet_model.layer2,
-            resnet_model.layer3,
-            resnet_model.layer4,
-            )
 
     audio_model = AudioFeatureModel()
     video_model = VideoFeatureModel()
@@ -262,15 +174,24 @@ if __name__ == '__main__':
         a4, v4 = ad.__getitem__(1000)
         a5, v5 = ad.__getitem__(2500)
 
+
         a = torch.stack((a1, a2, a3, a4, a5))
         v = torch.stack((v1, v2, v3, v4, v5))
 
-        view1, view2 = model(a,v)
-        loss = model.loss(view1, view2)
+        x, y, z = torch.rand(5, 100), torch.rand(5, 100), torch.rand(5, 100)
+        dist = centroid_loss(x, y, z)
+        print(dist)
 
-        print(view1)
-        print(view2)
-        print(view1.shape)
-        print(view2.shape)
-        print(loss)
+        # a, v = audio_model(a), video_model(v)
+        # print(a.shape)
+        # print(v.shape)
+
+        # view1, view2 = model(a,v)
+        # loss = model.loss(view1, view2)
+
+        # print(view1)
+        # print(view2)
+        # print(view1.shape)
+        # print(view2.shape)
+        # print(loss)
 
