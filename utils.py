@@ -63,14 +63,14 @@ def sequence_mask(lengths, maxlen=None, right_aligned=False):
 
     return mask.bool()
 
-    def generate_guse_embeddings(path):
-        """
-        Args:
-            path: path to root of the jsons containing text captions for each sample
-        Return:
-            None: 
-        
-        Save all the GUSE embeddings to a file (maybe numpy file).
-        Would be best to have a way to access embeddings from the sample's URL.
-        """
-        pass
+
+def generate_guse_embeddings(path):
+    """
+    Args:
+        path: path to root of the jsons containing text captions for each sample
+    Return:
+        None: 
+    Save all the GUSE embeddings to a file (maybe numpy file).
+    Would be best to have a way to access embeddings from the sample's URL.
+    """
+    pass

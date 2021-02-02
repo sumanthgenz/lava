@@ -194,4 +194,7 @@ if __name__ == '__main__':
         # print(view1.shape)
         # print(view2.shape)
         # print(loss)
+<<<<<<< HEAD
 
+=======
+>>>>>>> c8ef3e83f3e5cd7beb475e98c02e6970aeb1bfac

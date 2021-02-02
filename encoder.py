@@ -82,6 +82,7 @@ class AudioFeatureModel(torch.nn.Module):
                 self.drop,
         )
 
+<<<<<<< HEAD
     def forward(self, a):
         #Input [N * C * T]
 
@@ -90,6 +91,16 @@ class AudioFeatureModel(torch.nn.Module):
 
         #Output [N * T * D]
         return audio_encoded
+=======
+    def forward(self, input_audio):
+        #Input [N * C * T]
+
+        x = self.audio_conv(input_audio)
+        x = torch.einsum('ndt->ntd', [x])
+
+        #Output [N * T * D]
+        return x
+>>>>>>> c8ef3e83f3e5cd7beb475e98c02e6970aeb1bfac
 
 #Contains implemenation from https://github.com/CannyLab/aai/blob/e51bc4f0926530c39f289a948e0a1daebed3475a/aai/research/gptcaptions/models/encoders/predictive_byol.py#L21
 class VideoFeatureModel(torch.nn.Module):
@@ -184,11 +195,14 @@ class CAVE(torch.nn.Module):
                                 dropout=0.1,
                                 model_dimension=self._feature_dimension)
 
+<<<<<<< HEAD
 
 
         # lang feature model TO DO:
         self._lang_feature_model = LanguageFeatureModel()
 
+=======
+>>>>>>> c8ef3e83f3e5cd7beb475e98c02e6970aeb1bfac
         self._audio_token = torch.randn(self._batch_size, 1, self._feature_dimension)
 
         self._video_token = torch.randn(self._batch_size, 1, self._feature_dimension)
