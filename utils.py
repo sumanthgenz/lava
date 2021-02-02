@@ -6,6 +6,7 @@ import torchvision
 import torch.nn as nn
 import numpy as np
 from typing import Tuple, Optional
+import tensorflow as tf
 
 def nan_filter(input):
     input[torch.isinf(input)] = 0
@@ -61,4 +62,15 @@ def sequence_mask(lengths, maxlen=None, right_aligned=False):
         mask = row_vector > (-matrix + (maxlen - 1))
 
     return mask.bool()
-#test git push stout
+
+    def generate_guse_embeddings(path):
+        """
+        Args:
+            path: path to root of the jsons containing text captions for each sample
+        Return:
+            None: 
+        
+        Save all the GUSE embeddings to a file (maybe numpy file).
+        Would be best to have a way to access embeddings from the sample's URL.
+        """
+        pass

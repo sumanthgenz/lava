@@ -21,6 +21,21 @@ from metrics import *
 from utils import *
 
 
+class LanguageFeatureModel(torch.nn.Module):
+    def __init__(self,):
+
+        # Create an MLP here
+        self.text_mlp = None
+
+    def forward(self, t):
+        """
+        Args:
+            t: GUSE embedding(s) for given sample(s) in batch
+        Return:
+            text_encoded: output of passing t through text_mlp
+        """
+        pass 
+
 class AudioFeatureModel(torch.nn.Module):
     def __init__(self, 
                 dropout=0.1, 
@@ -67,14 +82,14 @@ class AudioFeatureModel(torch.nn.Module):
                 self.drop,
         )
 
-    def forward(self, input_audio):
+    def forward(self, a):
         #Input [N * C * T]
 
-        x = self.audio_conv(input_audio)
-        x = torch.einsum('ndt->ntd', [x])
+        audio_encoded = self.audio_conv(a)
+        audio_encoded = torch.einsum('ndt->ntd', [audio_encoded])
 
         #Output [N * T * D]
-        return x
+        return audio_encoded
 
 #Contains implemenation from https://github.com/CannyLab/aai/blob/e51bc4f0926530c39f289a948e0a1daebed3475a/aai/research/gptcaptions/models/encoders/predictive_byol.py#L21
 class VideoFeatureModel(torch.nn.Module):
@@ -168,6 +183,11 @@ class CAVE(torch.nn.Module):
         self._video_feature_model = VideoFeatureModel(
                                 dropout=0.1,
                                 model_dimension=self._feature_dimension)
+
+
+
+        # lang feature model TO DO:
+        self._lang_feature_model = LanguageFeatureModel()
 
         self._audio_token = torch.randn(self._batch_size, 1, self._feature_dimension)
 
