@@ -151,14 +151,17 @@ class AudioVisualData(Dataset):
 
     def __getitem__(self, idx):
         filePath = self.wav_paths[idx]
-
-        return get_audiovisual(filePath)
-        # return torch.rand(128, 2000), torch.rand(3, 300, 128, 128)
+        try:
+            return get_audiovisual(filePath)
+        except:
+            # print("Error at Idx: %d" % idx)
+            return torch.zeros(128, 2048), torch.zeros(3, 16, 128, 128)
 
 
 
 if __name__ == '__main__':
 
+    error_idxs = [155482, 169868, 165267, 76500, 158967, 269786]
     audio_model = AudioFeatureModel()
     video_model = VideoFeatureModel()
 
@@ -194,7 +197,3 @@ if __name__ == '__main__':
         # print(view1.shape)
         # print(view2.shape)
         # print(loss)
-<<<<<<< HEAD
-
-=======
->>>>>>> c8ef3e83f3e5cd7beb475e98c02e6970aeb1bfac

@@ -72,7 +72,7 @@ def get_audiovisual(path):
         if pad > 0:
             aud[idx] =  np.pad(aud_frame, pad_width=[(0,0),(0, pad)])
         else:
-            aud[idx] = aud_frame
+            aud[idx] = aud_frame[:2]
 
     for idx, frame in enumerate(input_v.decode(video=0)):
         vid[idx] = frame.to_ndarray(format='rgb24')

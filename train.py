@@ -17,7 +17,6 @@ from absl import app, flags
 from lightning import *
 
 wandb_logger = WandbLogger(name='run',project='kinetics_Video_CAVE')
-np.warnings.filterwarnings('ignore', category=np.VisibleDeprecationWarning)
 
 #Define modes
 flags.DEFINE_string('mode',
@@ -56,7 +55,7 @@ flags.DEFINE_integer('log_freq',
                     help='number of batches in between logging gradients',)
 
 def train_cave():
-    model = CAVELightning()
+        model = CAVELightning()
     # wandb_logger.watch(model, 
     #         log=FLAGS.log, 
     #         log_freq=FLAGS.log_freq)
@@ -73,20 +72,29 @@ def train_cave():
     #         log=FLAGS.log, 
     #         log_freq=FLAGS.log_freq)
 
-    wandb_logger.watch(model, 
-            log='gradients', 
-            log_freq=10)
+        wandb_logger.watch(model, 
+                log='gradients', 
+                log_freq=10)
 
-    trainer = pl.Trainer(
-            default_root_dir='/home/sgurram/Desktop/video_cave', 
-            gpus=[0, 1], 
-            max_epochs=100, 
-            accumulate_grad_batches=1,
-            overfit_batches=10, 
-            distributed_backend='ddp',
-            logger=wandb_logger,) 
-    
-    trainer.fit(model)
+        # wandb_logger = None
+
+        # trainer = pl.Trainer(
+        #         default_root_dir='/home/sgurram/Desktop/video_cave', 
+        #         gpus=[0, 1], 
+        #         max_epochs=100, 
+        #         distributed_backend='ddp',
+        #         accumulate_grad_batches=1,
+        #         logger=wandb_logger,) 
+                
+
+        trainer = pl.Trainer(
+                default_root_dir='/home/sgurram/Desktop/video_cave', 
+                gpus=[1], 
+                max_epochs=100, 
+                accumulate_grad_batches=4,
+                logger=wandb_logger,) 
+        
+        trainer.fit(model)
 
 
 if __name__ == '__main__':

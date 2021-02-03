@@ -6,7 +6,7 @@ import torchvision
 import torch.nn as nn
 import numpy as np
 from typing import Tuple, Optional
-import tensorflow as tf
+# import tensorflow as tf
 
 def nan_filter(input):
     input[torch.isinf(input)] = 0
