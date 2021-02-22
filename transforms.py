@@ -1,36 +1,22 @@
 import torch
-import torchvision
 import torchaudio
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 import os
 import random
 import pickle
-import tqdm
 from tqdm import tqdm
 from itertools import permutations  
 from random import shuffle
-
 
 import warnings
 import glob
 import socket
 
-
-from metrics import *
-
 assert torch.__version__.startswith("1.7")
 assert torchaudio.__version__.startswith("0.7")
 
 torchaudio.set_audio_backend("sox_io") 
-
-data = ""
-host = socket.gethostname()
-if host == "stout":
-    data = "big"
-elif socket.gethostname() == "greybeard":
-    data = "ssd"
 
 class WaveIdentity():
 
@@ -117,7 +103,6 @@ class SpecRandomCrop():
         self.crop_size = 1 - threshold
 
     def __call__(self, spec):
-        # size = int(spec.shape[1] * self.crop_size)
         size = 1000
         start = random.randint(0, (spec.shape[1] - size))
         return spec[:, start : (start + size)]
@@ -128,7 +113,6 @@ class SpecFixedCrop():
         self.crop_size = 1 - threshold
 
     def __call__(self, spec):
-        # size = int(spec.shape[1] * self.crop_size)
         size = 1000
         start = 250
         return spec[:, start : (start + size)]
@@ -200,12 +184,10 @@ class SpecShuffle():
         self.threshold = threshold
 
     def __call__(self, spec):
-        # segments = np.array(np.split(spec.T.numpy(), 4, axis=0))
         segments = np.array(np.split(spec.T.numpy()[1:], 3, axis=0))
         np.random.shuffle(segments)
         segments =  segments.flatten().reshape(999,128).T
         return torch.from_numpy(segments)
-        # return spec
 
 class SpecPermutes():
 
@@ -221,7 +203,7 @@ class SpecPermutes():
         return torch.from_numpy(np.array(permutes))
 
 
-# used to access transforms by name
+# access transforms by name
 wave_transforms = {
         'wave_identity': WaveIdentity,
         'wave_gaussian_noise': WaveGaussianNoise,

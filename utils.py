@@ -3,74 +3,206 @@ import av
 import torch
 import torchaudio
 import torchvision
-import torch.nn as nn
 import numpy as np
 from typing import Tuple, Optional
-# import tensorflow as tf
+import warnings
+import pickle
+import glob
+
+torchaudio.set_audio_backend("sox_io") 
+warnings.filterwarnings("ignore")
+
 
 def nan_filter(input):
+    """
+    Args:
+        input: (torch.Tensor) spectrogram with shape [T * M] -> T = timesteps, M = mel bins 
+    Return:
+        input: (torch.Tensor) spectrogram with shape [pad_len * M]
+    Filter out inf and NaN values from tensor
+    """
     input[torch.isinf(input)] = 0
     input[torch.isnan(input)] = 0
     return input
 
-#Implementation from https://github.com/CannyLab/aai/blob/main/aai/utils/video/transform.py
-def resize_video(video_frames: np.ndarray, target_size: Tuple[int, int]) -> np.ndarray:
-    assert len(video_frames.shape) == 4, 'Video should have shape [N_Frames x H x W x C]'
-    # print(video_frames)
+def adjust_video_size(video_frames, target_size=128, seq_len=16):
+    """
+    Args:
+        video_frames: (np.array) input video with shape [T * H * W * C] -> 
+                                                T = timesteps, H = height, W = width, C = channels 
+        target_size: (int) output dimension for H and W
+        seq_len: (int) output dimension for T
 
-    # pad = 300 -  video_frames.shape[0]
-    # if pad > 0:
-    #     video_frames =  np.pad(video_frames, pad_width=[(0, pad), (0,0), (0,0), (0,0)])
-
-    seq_len = 16
-    subsample_rate = int(video_frames.shape[0] / seq_len)
-    video_frames = (video_frames[::subsample_rate])[:seq_len]
-    assert video_frames.shape[0] == seq_len
-
-    output_array = np.zeros((
-        video_frames.shape[0],
-        target_size[0],
-        target_size[1],
-        video_frames.shape[3],
-    ))
-    for i in range(video_frames.shape[0]):
-        output_array[i] = cv2.resize(video_frames[i], target_size)
-    # return output_array, pad
-    return output_array
+    Return:
+        video_frames: (np.array) output video with desired output shape
+    Subsample videoframes and clip to seq_len frames (pad if T < seq_len). Crop frames from top-right corner to target_size (pad if needed).
+    """
+    subsample_rate = max(1, int(video_frames.shape[0]) // seq_len)
+    video_frames = video_frames[::subsample_rate][:seq_len]
+    if video_frames.shape[1] != target_size or video_frames.shape[2] != target_size:
+        video_frames = video_frames[:, :target_size, :target_size, :]
+        w_pad, h_pad = target_size - int(video_frames.shape[1]), target_size - int(video_frames.shape[2])
+        video_frames =  torch.nn.functional.pad(video_frames, pad=((0,0, 0,w_pad, 0,h_pad, 0,0)))
+    if video_frames.shape[0] < seq_len:
+        padding = torch.zeros(seq_len - video_frames.shape[0], target_size, target_size, 3)
+        video_frames =  torch.cat((video_frames, padding))
+    return video_frames
 
 def pad_spec(spec, pad_len=2048):
+    """
+    Args:
+        spec: (np.array) spectrogram with shape [T * M] -> T = timesteps, M = mel bins 
+        pad_len: (int) max. sequence length (timesteps) for spectrogram
+    Return:
+        spec: (np.array) spectrogram with shape [pad_len * M]
+    Zero-pad spectrogram to desired sequence length
+    """
     to_pad = pad_len - spec.shape[-1] 
     if to_pad > 0:
         return torch.nn.functional.pad(spec, (0,to_pad,0,0))
     return spec[:,:pad_len]
 
-#Implementation from https://github.com/CannyLab/aai/blob/4a93c14d834f045ee3fa61929c4f17ebc765d10c/aai/utils/torch/masking.py#L20
+def get_log_mel_spec(wave, samp_freq=16000):
+    wave = torch.unsqueeze(wave, 0)
+    spec = torchaudio.transforms.MelSpectrogram()(wave)
+    return spec.log2()[0,:,:]
+
 def get_src_conditional_mask(max_sequence_length):
+    """
+    Args:
+        max_sequence_length: (int) the length of the longest sequence in a batch
+    Return:
+        mask: (torch.Tensor) '-inf' and '0' conditional mask 
+    """
     mask = (torch.triu(torch.ones(max_sequence_length, max_sequence_length)) == 1).transpose(0, 1)
     return mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
 
-#Implementation from https://github.com/CannyLab/aai/blob/4a93c14d834f045ee3fa61929c4f17ebc765d10c/aai/utils/torch/masking.py#L20
-def sequence_mask(lengths, maxlen=None, right_aligned=False):
-    # https://discuss.pytorch.org/t/pytorch-equivalent-for-tf-sequence-mask/39036
-    if maxlen is None:
-        maxlen = lengths.max()
-    matrix = torch.unsqueeze(lengths, dim=-1)
-    row_vector = torch.arange(0, maxlen, 1).type_as(matrix)
-    if not right_aligned:
-        mask = row_vector < matrix
-    else:
-        mask = row_vector > (-matrix + (maxlen - 1))
+def get_mp4_paths(root='/big/davidchan/kinetics'):
+    """
+    Args:
+        root: path to root of the Kinetics mp4 files
+    Return:
+        None: 
+    Save the filepaths for the dataset to a txt file
+    """
+    file_paths = []
+    for path in tqdm(glob.glob('{}/kinetics_train_clipped/*.mp4'.format(root))):
+        file_paths.append(path.split('kinetics/')[-1]+'\n')
 
-    return mask.bool()
+    for path in tqdm(glob.glob('{}/kinetics_val_clipped/*.mp4'.format(root))):
+        file_paths.append(path.split('kinetics/')[-1]+'\n')
 
+    f = open("Desktop/kinetics.txt", "a")
+    f.writelines(file_paths)
+    f.close()
+
+def create_kinetics_labels():
+    classes = []
+
+    train = pickle.load(open("/home/sgurram/Desktop/kinetics/kinetics_train.pickle", "rb"))
+    val = pickle.load(open("/home/sgurram/Desktop/kinetics/kinetics_validate.pickle", "rb"))
+    # test = pickle.load(open("/home/sgurram/Desktop/kinetics/kinetics_test.pickle", "rb"))
+
+    for key in train:
+        if train[key][1] not in classes:
+            classes.append(train[key][1])
+
+    print(len(classes))
+
+    for key in train:
+        class_name = train[key][1]
+        train[key] = [class_name, classes.index(class_name)]
+
+    for key in val:
+        class_name = val[key][1]
+        val[key] = [class_name, classes.index(class_name)]
+
+    pickle.dump(train, open("/home/sgurram/Desktop/kinetics/train.pickle", "wb"))
+    pickle.dump(val, open("/home/sgurram/Desktop/kinetics/val.pickle", "wb"))
+    pickle.dump(classes, open("/home/sgurram/Desktop/kinetics/kinetics700_classes.pickle", "wb"))
+
+    return train, val
+
+    
+# def get_kinetics_labels(datatype, path, text=False):
+
+def get_kinetics_labels(prefix="train"):
+
+    data = pickle.load(open("/home/sgurram/Desktop/kinetics/{}.pickle".format(prefix), "rb"))
+    root = '/big/davidchan/kinetics/kinetics_{}_clipped/*.mp4'.format(prefix)
+
+    present = 0
+    total = 0
+
+    for path in glob.glob(root):
+        filename = path.split('clipped/')[-1][:-4]
+        if filename in data:
+            present += 1
+        total += 1
+    
+    print(prefix, present, total)
 
 def generate_guse_embeddings(path):
     """
     Args:
-        path: path to root of the jsons containing text captions for each sample
+        path: (str) path to root of the jsons containing text captions for each sample
     Return:
         None: 
     Save all the GUSE embeddings to a file (maybe numpy file).
     Would be best to have a way to access embeddings from the sample's URL.
     """
     pass
+
+
+def _scaled_axis(axis_length, min_scale=1, max_scale=1e4, n_scales=8):
+    positions = torch.arange(axis_length).float()
+    log_increment = np.log(max_scale / min_scale) / (n_scales - 1)
+    inv_scale_increment = min_scale * torch.exp(torch.arange(n_scales).float() * -log_increment)
+    scaled_axis = positions.unsqueeze(1) * inv_scale_increment.unsqueeze(0)
+    return torch.cat([torch.sin(scaled_axis), torch.cos(scaled_axis)], dim=1)
+
+def position_embed(inputs: torch.Tensor, start: int = 1, concat: bool = False, base: int = 10000) -> torch.Tensor:
+    hidden_size = inputs.shape[-1]
+    if concat and hidden_size % 2 != 0:
+        raise AssertionError('Model hidden size must be even for sinusoidal embedding')
+    if hidden_size % 2 != 0:
+        hidden_size += 1
+
+    if inputs.is_cuda:
+        power = torch.arange(0, hidden_size, 2).float().cuda() / hidden_size
+        seqpos = torch.arange(start, inputs.shape[1] + 1).unsqueeze(0).float().cuda()
+    else:
+        power = torch.arange(0, hidden_size, 2).float() / hidden_size
+        seqpos = torch.arange(start, inputs.shape[1] + 1).unsqueeze(0).float()
+
+    divisor = base**power
+
+    # Compute the sequence positions
+    index = seqpos.unsqueeze(-1) / divisor
+
+    sin_embedding = torch.sin(index)
+    cos_embedding = torch.cos(index)
+
+    position_embedding = torch.stack([sin_embedding, cos_embedding], dim=-1).reshape(1, inputs.shape[1], hidden_size)
+
+    if concat:
+        output = torch.cat([inputs, position_embedding.expand(inputs.shape[0], -1, -1)], dim=-1)
+        return output
+    return inputs + position_embedding.type_as(inputs)
+
+def position_embed_3d(inputs):
+    assert len(inputs.shape) == 5, 'Inputs to 3D position embedding must br a rank 5 tensor'
+
+    # Get the hidden dimension
+    batch_size, x_len, y_len, z_len, _ = inputs.shape
+
+    # Get a position embedding for each dimension
+    x_embeddings = _scaled_axis(x_len).unsqueeze(1).expand(-1, y_len, -1).unsqueeze(2).expand(-1, -1, z_len, -1)
+    y_embeddings = _scaled_axis(y_len).unsqueeze(0).expand(x_len, -1, -1).unsqueeze(2).expand(-1, -1, z_len, -1)
+    z_embeddings = _scaled_axis(z_len).unsqueeze(0).expand(x_len, -1, -1).unsqueeze(1).expand(-1, y_len, -1, -1)
+
+    position_embedding = torch.cat([x_embeddings, y_embeddings, z_embeddings], dim=-1)
+
+    # Concatenate the position embeddings to the inputs
+    return torch.cat(
+        [inputs, position_embedding.unsqueeze(0).expand(batch_size, -1, -1, -1, -1).type_as(inputs)], dim=-1)

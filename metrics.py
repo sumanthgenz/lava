@@ -9,9 +9,11 @@ import matplotlib.pyplot as plt
 import random
 
 #Vector-Wise
+
 def cosine_similarity(x,y):
-    nx = np.linalg.norm(x.numpy())
-    ny = np.linalg.norm(y.numpy())
+    x, y = x.cpu().numpy(), y.cpu().numpy()
+    nx = np.linalg.norm(x)
+    ny = np.linalg.norm(y)
     cos = np.dot(x, y)/(nx * ny)
     return min(max(cos, -1), 1)
 
@@ -24,112 +26,26 @@ def kl_divergence(x, y):
     return sum(x[i] * np.log(x[i]/(x[i]+denom_bound)) for i in range(x.size(0)))
 
 def hypersphere_norm(x):
-    return torch.nn.functional.normalize(x, p=2, dim= -1)
+    return torch.nn.functional.normalize(x, p=2, dim=-1)
 
 def l2_distance(x,y):
-    # return np.linalg.norm(x-y)
-    return hypersphere_norm(x-y)
-
-def vector_couloumb(x, y, pos_pair, k=0.05, q1=1, q2=1):
-    force = (k * q1 * q2) / (l2_distance(x, y)**2)
-    if pos_pair:
-        return -force
-    return force
+    return torch.cdist(x, y, p=2)
 
 
 #Batch-Wise
-#x, y have dims B * N, where B=bsz and N= latent_feature_dimensions
 def nce_loss(x, y):
-    #sim matrix dims = B * B, and hold pairwise (per sample) dot-product similarity for x, y views
-    #pos_pairs dims = N, and specify which indices correspond to positive-pair dot products per sample in x
     sim_matrix = torch.mm(x, y.t())
     pos_pairs = torch.arange(x.size(0)).to(sim_matrix.device)
     loss = torch.nn.functional.cross_entropy(sim_matrix, pos_pairs)
     return loss
 
-
 def centroid_loss(x, y, z):
     #compute centroid as arithmetic mean of latent vectors x, y, z
-    centroid = (x * y * z)/3
-    x_loss = hypersphere_norm(x.reshape(-1) - centroid.reshape(-1)).reshape(x.shape[0], -1).sum(-1)
-    y_loss = hypersphere_norm(y.reshape(-1) - centroid.reshape(-1)).reshape(y.shape[0], -1).sum(-1)
-    z_loss = hypersphere_norm(z.reshape(-1) - centroid.reshape(-1)).reshape(z.shape[0], -1).sum(-1)
-    loss = (x_loss + y_loss + z_loss).mean()
-    return loss
-
-#x and y normalized to hypersphere 
-def batch_couloumb(x, y, k=0.05):
-    k = 0.05
-    q1, q2, = 1, 1
-    sim_matrix = torch.mm(x.norm(dim=-1), y.norm(dim=-1).t())
-    force_loss = 0
-    for i in sim_matrix:
-        for k in sim_matrix[i]:
-            dist = 2 - (1+sim_matrix[i][k])
-            if i==k:
-                force_loss -= 1/(dist**2)
-            else:
-                force_loss += 1/(dist**2)
-    force_loss *= (k*q1*q2)  
-    return force_loss
-
-#x and y normalized to hypersphere 
-def batch_particle_contrastive(x, y):
-    k = 0.05
-    q1, q2, = 1, 1
-    sim_matrix = torch.mm(x.norm(dim=-1), y.norm(dim=-1).t())
-    force_loss = 0
-    potentials = []
-    for i in sim_matrix:
-        sample_loss = 0
-        for k in sim_matrix[i]:
-            dist = 2*(1 - sim_matrix[i][k])
-            if i==k:
-                sample_loss -= 1/dist
-            else:
-                sample_loss += 1/dist
-        potentials += [sample_loss]
-    
-    force_loss = k * q1 * q2 * (sum(potentials)/x.shape(0))  
-    return force_loss
-
-def temporal_contrastive_balanced(x, y):
-    #x is anchor (B, D), y is permutes (B, P, D)
-
-    #temporal contrast is from a sample x to its temporal permutes
-    temporal = torch.einsum('bpd,bd->bp', y,x) 
-
-    #content contrast is from a sample x to the permutes of another sample
-    content = torch.einsum('bpd,bd->bp', torch.flip(y, [0]), x) 
-
-    #concat temporal and content to achieve B * 2P
-    sim_matrix = torch.cat((temporal, content), 1)
-
-    #the first permute in each permute array is in correct order (pos-pair) 
-    pos_pairs = torch.zeros(x.shape(0))
-
-    #modelled after NCE loss
-    loss = torch.nn.cross_entropy(sim_matrix, pos_pairs)
-
-    return loss
-
-def temporal_contrastive_all(x, y):
-    #x is anchor (B, D), y is permutes (B, P, D)
-
-    p = y.shape(1)
-
-    #effectively flatten y to be (B*P) * D
-    y = y.reshape(y.shape(0)*y.shape(1), y.shape(-1))
-
-    #sim matrix is B * (B*D)
-    sim_matrix = torch.mm(x, y.t())
-
-    #offset by p since that is the number of permutes for each sample
-    pos_pairs =  p * torch.arange(x.size(0))
-
-    #modelled after NCE loss
-    loss = torch.nn.cross_entropy(sim_matrix, pos_pairs)
-
+    centroid = (x + y + z)/3
+    x_loss = l2_distance(x, centroid).mean()
+    y_loss = l2_distance(y, centroid).mean()
+    z_loss = l2_distance(z, centroid).mean()
+    loss = (x_loss + y_loss + z_loss)/3
     return loss
 
 # lalign and lunif from https://arxiv.org/pdf/2005.10242.pdf
@@ -139,14 +55,6 @@ def lalign(x, y, alpha=2):
 def lunif(x, t=3):
     sq_pdist = torch.pdist(x, p=2).pow(2)
     return sq_pdist.mul(-t).exp().mean().log()
-
-#alignnment and uniformity from https://github.com/CannyLab/aai/blob/davidmchan/features/hypersphere/aai/utils/torch/metrics.py
-def alignment(x, y, alpha=2):
-    return 1 - (x - y).norm(dim=1).pow(alpha).mean()
-
-def uniformity(x, t=3):
-    sq_pdist = torch.pdist(x, p=2).pow(2)
-    return 1 - sq_pdist.mul(-t).exp().mean()
 
 #implementation from aai/utils/torch/metrics.py
 def _compute_mAP(logits, targets, threshold):  
@@ -167,3 +75,11 @@ def compute_accuracy(logits, ground_truth, top_k=1):
     correct = pred.eq(ground_truth.reshape(1, -1).expand_as(pred))
     correct_k = correct[:top_k].reshape(-1).float().sum(0)
     return correct_k.mul_(100.0 / batch_size)
+
+if __name__ == "__main__":
+    a, v, t = torch.rand(32, 128), torch.rand(32, 128), torch.rand(32, 128)
+
+    print(centroid_loss(a, v, t))
+    print(nce_loss(a,v))
+
+    print(*(list(torchvision.models.resnet18(pretrained=True).children())[:-2]))

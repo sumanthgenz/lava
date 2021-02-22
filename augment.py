@@ -1,57 +1,120 @@
 import torch
 import torchvision
 import torchaudio
+import tensorflow as tf
+import tensorflow_hub as hub
 
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
-import random
 
-import tqdm
 from tqdm import tqdm
 import av
-import cv2
 
 import os
 import warnings
 import glob
-from typing import Tuple, Optional
 
-from utils import *
-from metrics import *
-from transforms import *
+from utils import adjust_video_size, nan_filter, pad_spec, get_log_mel_spec
+from metrics import cosine_similarity
 
 torchaudio.set_audio_backend("sox_io") 
 os.environ["IMAGEIO_FFMPEG_EXE"] = "/home/sgurram/anaconda3/bin/ffmpeg"
 warnings.filterwarnings("ignore")
 
-def get_audio(path):
-    input_ = av.open(path, 'r')
-    input_stream = input_.streams.audio[0]
-    aud = np.empty([input_stream.frames, 2, input_stream.frame_size])
+def get_lava_features(save_dir=None,
+                    mp4_path=None, 
+                    text="default", 
+                    wav_path=None, 
+                    save=False,
+                    guse_model=None):
 
-    for idx, frame in enumerate(input_.decode(audio=0)):
-        aud[idx] = frame.to_ndarray(format='sp32')
-    input_.close()
+    v = get_video_from_mp4(mp4_path)
 
-    #channel avg, and flatten
-    aud = torch.from_numpy(aud).mean(dim=1).type(dtype=torch.float32)
-    return torch.flatten(aud)
+    if wav_path:
+        a = get_audio_from_wav(wav_path)
+    else:
+        a = get_audio_from_mp4(mp4_path)
+    
+    if text:
+        t = guse_model([text])
 
-    # aud = torch.from_numpy(aud).type(dtype=torch.float32)
-    # return torch.reshape(aud, (aud.size(1), -1))[1]
+    filename = (mp4_path.split('/')[-1]).split('.')[0]
+    print(filename)
 
-#Implementation from https://github.com/CannyLab/aai/blob/main/aai/utils/video/file.py
-def get_video(path):
-    input_ = av.open(path, 'r')
-    input_stream = input_.streams.video[0]
-    vid = np.empty([input_stream.frames, input_stream.height, input_stream.width, 3], dtype=np.uint8)
+    if save:
+        filename = (mp4_path.split('/')[-1]).split('.')[0]
+        a_path = '{}/audio/{}'.format(save_dir, filename)
+        v_path = '{}/video/{}'.format(save_dir, filename)
+        t_path = '{}/text/{}'.format(save_dir, filename)
 
-    for idx, frame in enumerate(input_.decode(video=0)):
+        np.save(v_path, torch.from_numpy(v))
+        if a:
+            np.save(a_path, torch.from_numpy(a))
+        if t:
+            np.save(t_path, t.numpy())
+
+    return a, v, t
+
+def get_video_from_mp4(path):
+    input_v = av.open(path, 'r')
+
+    v_stream = input_v.streams.video[0]
+
+    video_channels = 3
+
+    vid = np.empty([v_stream.frames, v_stream.height, v_stream.width, video_channels], dtype=np.uint8)
+
+    for idx, frame in enumerate(input_v.decode(video=0)):
         vid[idx] = frame.to_ndarray(format='rgb24')
-    input_.close()
 
-    return torch.from_numpy(vid)
+    input_v.close()
+
+    vid = torch.from_numpy(vid)
+    vid = adjust_video_size(vid)
+        
+    vid = nan_filter(vid)
+
+    #vid shape: [T x H x W x C], where T = 16, H = W = 128, C = 3
+    return vid
+
+def get_audio_from_mp4(path):
+    input_a = av.open(path, 'r')
+
+    try:
+        a_stream = input_a.streams.audio[0]
+    except:
+        return None
+
+
+    audio_channels = 2
+    aud = np.empty([a_stream.frames, audio_channels, a_stream.frame_size])
+
+    for idx, frame in enumerate(input_a.decode(audio=0)):
+        aud_frame = frame.to_ndarray(format='sp32')
+        pad =  a_stream.frame_size - aud_frame.shape[-1]
+        if pad > 0:
+            aud[idx] =  np.pad(aud_frame, pad_width=[(0,0),(0, pad)])
+        else:
+            aud[idx] = aud_frame[:2]
+
+    input_a.close()
+
+    aud = get_log_mel_spec(torch.flatten(torch.from_numpy(aud).mean(dim=1).type(dtype=torch.float32)))
+    aud = pad_spec(aud)
+    aud = nan_filter(aud)
+
+    #aud shape: [M x T], where M = 128, T = 2048
+    return aud
+
+def get_audio_from_wav(path):
+    try:
+        wave, samp_freq = torchaudio.load(path)
+    except:
+        return None
+    spec = torchaudio.transforms.MelSpectrogram()(wave)
+    spec = spec.log2().mean(dim=0).squeeze() #avg across channels dimensions
+    spec = nan_filter(pad_spec(spec))
+    return spec
 
 def get_audiovisual(path):
     input_a = av.open(path, 'r')
@@ -82,135 +145,152 @@ def get_audiovisual(path):
 
     aud = get_log_mel_spec(torch.flatten(torch.from_numpy(aud).mean(dim=1).type(dtype=torch.float32)))
     aud = pad_spec(aud)
-    vid = torch.from_numpy(resize_video(vid, target_size=(128,128))).type(dtype=torch.float32)
-    vid = torch.reshape(vid, (vid.size(-1), vid.size(0), vid.size(1), vid.size(2)))
+
+    vid = torch.from_numpy(vid)
+    vid = adjust_video_size(vid)
+        
     aud = nan_filter(aud)
     vid = nan_filter(vid)
 
-    #aud shape: [T * M], where M = 128, T ~ 2000
-    #vid shape: [C * T * H * W], where T <= 300, H = W = 128, C = 3
-
+    #aud shape: [M x T], where M = 128, T = 2048
+    #vid shape: [T x H x W x C], where T = 16, H = W = 128, C = 3
     return aud, vid
 
-def get_wave(path):
-    wave, samp_freq = torchaudio.load(path)
-    wave = wave.mean(dim=0) #avg both channels to get single audio strean
-    return wave, samp_freq
+def numpy_processing(path):
+    try:
+        a, v = get_audiovisual(path)
+
+    except: 
+        print("Skipped: ", path)
+        return
+
+    datatype = path.split('/')[-2]
+    filename = path.split('{}/'.format(datatype))[-1][:-4]
+    a_filename = '/big/sgurram/kinetics_numpy/{}/audio/{}.npy'.format(datatype, filename)
+    v_filename = '/big/sgurram/kinetics_numpy/{}/video/{}.npy'.format(datatype, filename)
+
+    np.save(a_filename, a)
+    np.save(v_filename, v)
+    return a_filename, v_filename
 
 
-def get_mfcc(wave, samp_freq=16000):
-    return np.array((torchaudio.transforms.MFCC(sample_rate=samp_freq)(wave.unsqueeze(0))).mean(dim=0))
+def save_npy_files(prefix):
+    """
+    Args:
+        prefix: (str) specifies type of data [train, val, test]
+        view_progres: (bool) if True, use tqdm for progress (default False)
+    Return:
+        a_paths: (list -> str) paths to audio feature npy files
+        v_paths: (list -> str) paths to video feature npy files
+        t_paths: (list -> str) paths to text feature npy files
 
+    Fetch paths to audio, video, text feature files for a given sample, 
+    if all 3 feature paths exist.
+    """
 
-def get_mel_spec(wave, samp_freq=16000):
-    wave = torch.unsqueeze(wave, 0)
-    return (torchaudio.transforms.MelSpectrogram(sample_rate=samp_freq)(wave))[0,:,:]
+    files = []
+    prefix = 'val' if prefix=='val' else 'train'
+    root = '/big/sgurram/kinetics_downsample/{}/*.mp4'.format(prefix)
 
-
-def get_log_mel_spec(wave, samp_freq=16000):
-    wave = torch.unsqueeze(wave, 0)
-    spec = torchaudio.transforms.MelSpectrogram()(wave)
-    spec = (spec.log2()[0,:,:])
-    spec[torch.isinf(spec)] = 0
-    return spec 
-
-
-def augment(sample, wave_transform, spec_transform, threshold, fixed_crop=True):
-    wave = wave_transform(threshold)(sample)
-    wave = wave.type(torch.FloatTensor)
-    spec = get_log_mel_spec(wave)
-
-    if fixed_crop:
-        spec = spec_transform(threshold)(SpecFixedCrop(threshold)(spec))
-        spec[torch.isinf(spec)] = 0
-        return spec
+    for path in glob.glob(root):
+        files.append(path)
     
-    spec = spec_transform(threshold)(SpecRandomCrop(threshold)(spec))
-    spec[torch.isinf(spec)] = 0
-    return spec
-
-def get_augmented_views(path):
-    sample, _ = get_wave(path)
-
-    wave1 =  random.choice(list(wave_transforms.values()))
-    spec1 =  random.choice(list(spec_transforms.values()))
-    threshold1 = random.uniform(0.0, 0.5)
-
-    wave2 =  random.choice(list(wave_transforms.values()))
-    spec2 =  random.choice(list(spec_transforms.values()))
-    threshold2 = random.uniform(0.0, 0.5)
-
-    # wave1 = WaveIdentity
-    # wave2 = WaveIdentity
-
-    # spec1 = SpecIdentity
-    # spec2 = SpecIdentity
-
-    return augment(sample, wave1, spec1, threshold1), augment(sample, wave2, spec2, threshold2), (wave1, spec1), (wave2, spec2)
-
-def get_temporal_shuffle_views(path):
-    sample, _ = get_wave(path)
-    wave = WaveIdentity
-    spec1 = SpecIdentity
-    spec2 = SpecPermutes
-    threshold = random.uniform(0.0, 0.5)
-
-    # Return (anchor, permutes), anchor is single sample, permutes is a list of samples
-    return augment(sample, wave, spec1, threshold, fixed_crop=False), augment(sample, wave, spec2, threshold1)
+    cores = multiprocessing.cpu_count()
+    with multiprocessing.Pool(cores) as p:
+        list(tqdm(p.imap_unordered(numpy_process, files), total=len(files)))
     
+def get_npy_paths(prefix, view_progress=False):
+    """
+    Args:
+        prefix: (str) specifies type of data [train, val, test]
+        view_progres: (bool) if True, use tqdm for progress (default False)
+    Return:
+        a_paths: (list -> str) paths to audio feature npy files
+        v_paths: (list -> str) paths to video feature npy files
+        t_paths: (list -> str) paths to text feature npy files
+
+    Fetch paths to audio, video, text feature files for a given sample, 
+    if all 3 feature paths exist.
+    """
+    a_paths, v_paths, t_paths = [], [], []
+    count = 0
+
+
+    root = '/big/davidchan/kinetics/kinetics_{}_clipped/*.mp4'.format(prefix)
+
+    a_root = '/big/sgurram/kinetics_numpy/{}/audio/'.format(prefix)
+    v_root = '/big/sgurram/kinetics_numpy/{}/video/'.format(prefix)
+    if prefix == 'val':
+        prefix = 'e' + prefix
+    t_root = '/big/afang/kinetics_{}_numpy/'.format(prefix)
+
+    paths = tqdm(glob.glob(root)) if view_progress else glob.glob(root)
+
+    for path in paths:
+        filename = path.split('clipped/')[-1][:-4] + '.npy'
+        a_path = a_root + filename 
+        v_path = v_root + filename 
+        t_path = t_root + filename 
+        exists = [os.path.isfile(a_path), os.path.isfile(v_path), os.path.isfile(t_path)]
+        if all(exists):
+            a_paths.append(a_path)
+            v_paths.append(v_path)
+            t_paths.append(t_path)
+
+    return a_paths, v_paths, t_paths
+
+
 if __name__ == '__main__':
+
+    # Code below is for experimenting with the methods above
+
+    # Load filepaths for Kinetics Validation set
     dir = "/big/davidchan/kinetics/kinetics_val_clipped"
-    wav_paths = []
+    file_paths = []
     for path in glob.glob(f'{dir}/*.mp4'):
-        wav_paths.append(path)
+        file_paths.append(path)
 
-    for filepath in tqdm(wav_paths[:1]):
-        # wav_path = "/{dir}/kinetics_audio/train/25_riding a bike/0->--JMdI8PKvsc.wav".format(dir = data)
-        # wav_path = "/big/kinetics_audio/train/668_jumping sofa/27->-L3lKNeY5mIs.wav"
-        wav_path = "/big/kinetics_audio/validate/542_ice swimming/55->-Zp44Wj7soCE.wav"
-        # wav_path = "/big/kinetics_audio/validate/590_playing paintball/61->-oTCio7AcabE.wav"
+    path = "/big/kinetics_audio/train/25_riding a bike/0->--JMdI8PKvsc.wav"
+    # print(get_audio_from_wav(path))
 
-        # filepath = "/big/davidchan/kinetics/kinetics_train_clipped/-JMdI8PKvsc.mp4"
-        filepath = "/big/davidchan/kinetics/kinetics_train_clipped/L3lKNeY5mIs.mp4"
-        # filepath = "/big/davidchan/kinetics/kinetics_val_clipped/Zp44Wj7soCE.mp4"
-        # filepath = "/big/davidchan/kinetics/kinetics_val_clipped/oTCio7AcabE.mp4"
+    embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder/4")
+    a, v, t = get_lava_features(mp4_path=file_paths[4],
+                            wav_path=path,
+                            guse_model=embed)
+    print(a.shape)
+    print(v.shape)
+    print(t.shape)
 
-        aud, vid = get_audiovisual(filepath)
+    positive = ["this is my pet, a friendly little dog", "this is my pet, a friendly little puppy"]
+    negative = ["this is my pet, a friendly little dog", "launch the rocket to reach low-earth orbit and begin re-entry into the atmosphere"]
 
-        print(aud.shape)
-        print(vid.shape)
+    pos = embed(positive)
+    neg = embed(negative)
 
-        # vid = get_audio(filepath)
-        # vid = get_video(filepath)
-        # wav, _ = get_wave(wav_path)
+    p1, p2 = pos
+    n1, n2 = neg
+    print(cosine_similarity(p1, p2))
+    print(cosine_similarity(n1, n2))
 
-        # print(vid)
-        # print(vid.shape)
-
-        # spec1 = get_log_mel_spec(wav)
-        # spec2 = get_log_mel_spec(vid)
-
-        # f = plt.figure()
-        # f.add_subplot(2, 1, 1)
-        # plt.imshow(spec1)
-
-
-        # f.add_subplot(2, 1, 2)
-        # plt.imshow(spec2)
-
-        # plt.savefig("Desktop/pyav_spec.png")
-        
-        # view1, view2, _, _ = get_augmented_views(filepath)
-        # permutes = get_temporal_shuffle_views(filepath)
-        # view1, view2 = permutes[5], permutes[10]
+    '''Evaluate Audiovisual Feature Extraction'''
+    # for path in tqdm(file_paths[:5]):
+    #     a, v = get_audiovisual(path)
+    #     print("Audio Features Shape: ", a.shape)
+    #     print("Video Features Shape: ", v.shape)
     
-    # print(permutes.shape)
-    # f = plt.figure()
-    # f.add_subplot(1, 2, 1)
-    # plt.imshow(view1)
+    '''Verify Audiovisual Numpy Feature Files'''
+    # for path in tqdm(file_paths[:5]):
+    #     a_file, v_file = numpy_processing(path)
+    #     print("Audio Features Shape: ", np.load(a_file).shape)
+    #     print("Video Features Shape: ", np.load(v_file).shape)
 
-    # f.add_subplot(1, 2, 2)
-    # plt.imshow(view2)
-    # plt.savefig("Desktop/log_mel_two_views.png")
+    '''Visualize Downsampled Video Frame'''
+    # path = file_paths[0]
+    # _, v = get_audiovisual(filepath)
+    # img = Image.fromarray(v[0], 'RGB')
+    # img.save('visualize_video_frame.png')
 
-#Test git push on stout
+    '''Visualize Spectrogram at Given Sampling Rate'''
+    # path = file_paths[0]
+    # a, _ = get_audiovisual(filepath)
+    # plt.savefig("visualize_spec.png")

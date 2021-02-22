@@ -4,37 +4,47 @@ import torchvision
 import torch.nn as nn
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 import pytorch_lightning as pl
-from efficientnet_pytorch import EfficientNet
 
 import numpy as np
-import pandas as pd 
+from tqdm import tqdm
+from collections import Counter
+
 import warnings
 import glob
-from tqdm import tqdm
 import pickle
-from collections import Counter
 import copy
 import os
+import sys
 
-from data import *
-from metrics import *
-from utils import *
+from data import LAVAData, Kinetics700Data
+from metrics import nce_loss, centroid_loss
+from utils import get_src_conditional_mask, position_embed, position_embed_3d
+# from aai.alexandria.layers.functional.positional_embedding import position_embed, position_embed_3d
 
+torchaudio.set_audio_backend("sox_io")
+warnings.filterwarnings("ignore")
 
 class LanguageFeatureModel(torch.nn.Module):
-    def __init__(self,):
+    def __init__(self,
+                model_dimension=512,
+                dropout=0.1):
 
-        # Create an MLP here
-        self.text_mlp = None
+        super(LanguageFeatureModel, self).__init__()
+
+        self.model_dimension = model_dimension
+        self.drop = dropout
+
+        self.projection_mlp = torch.nn.Sequential(
+            torch.nn.Linear(self.model_dimension, self.model_dimension),
+            torch.nn.Dropout(p=self.drop),
+            torch.nn.BatchNorm1d(self.model_dimension),
+            torch.nn.ReLU(),
+            torch.nn.Linear(self.model_dimension, self.model_dimension),
+        )
 
     def forward(self, t):
-        """
-        Args:
-            t: GUSE embedding(s) for given sample(s) in batch
-        Return:
-            text_encoded: output of passing t through text_mlp
-        """
-        pass 
+        """ encode text with projection_mlp and return """
+        return self.projection_mlp(t) 
 
 class AudioFeatureModel(torch.nn.Module):
     def __init__(self, 
@@ -47,7 +57,6 @@ class AudioFeatureModel(torch.nn.Module):
         self.model_dimension = model_dimension
         self.time_stpes = 300
 
-        #audio convnet 
         self.conv1 = torch.nn.Conv1d(
                     in_channels=self.mel_freq, 
                     out_channels=self.model_dimension, 
@@ -75,18 +84,20 @@ class AudioFeatureModel(torch.nn.Module):
 
         self.audio_conv = nn.Sequential(
                 self.conv1,
-                self.conv2,
                 self.bn,
                 self.relu,
+                self.conv2,
                 self.pool1,
-                self.drop,
+                self.bn,
+                self.relu,
         )
 
     def forward(self, a):
         #Input [N * C * T]
 
         audio_encoded = self.audio_conv(a)
-        audio_encoded = torch.einsum('ndt->ntd', [audio_encoded])
+        audio_encoded = audio_encoded.permute(0,2,1)
+        audio_encoded = position_embed(audio_encoded)
 
         #Output [N * T * D]
         return audio_encoded
@@ -97,73 +108,72 @@ class VideoFeatureModel(torch.nn.Module):
                 dropout=0.1, 
                 model_dimension=512,
                 seq_len=16,
-                target_len=256):
+                target_len=256,
+                position_emb_len=48):
 
         super(VideoFeatureModel, self).__init__()
 
         self.model_dimension = model_dimension
         self.seq_len = seq_len
         self.target_len = target_len
+        self.position_emb_len = 48
 
         self.drop = dropout
 
         self.resnet_model = torchvision.models.resnet18(pretrained=True)
 
         self.feature_model = torch.nn.Sequential(
-            self.resnet_model.conv1,
-            self.resnet_model.bn1,
-            self.resnet_model.relu,
-            self.resnet_model.maxpool,
-            self.resnet_model.layer1,
-            self.resnet_model.layer2,
-            self.resnet_model.layer3,
-            self.resnet_model.layer4,
-        )
+            *(list(self.resnet_model.children())[:-2]))
 
-
-        # 32 -> 256, 256 -> 512
+        # 560 -> 512 -> 512
         self.feature_mlp = torch.nn.Sequential(
+            torch.nn.Linear(self.model_dimension + self.position_emb_len, self.model_dimension),
             torch.nn.Dropout(p=self.drop),
-            torch.nn.Linear(self.model_dimension // self.seq_len, self.target_len),
             torch.nn.BatchNorm1d(self.target_len),
             torch.nn.ReLU(),
-            torch.nn.Linear(self.target_len, self.model_dimension),
+            torch.nn.Linear(self.model_dimension, self.model_dimension),
         )
 
     def forward(self, v):
-        #Input [N * C * S * H * W]
 
-        # x = x.type(torch.FloatTensor)
-        video_frames = v.reshape(v.shape[0]*v.shape[2], v.shape[1], v.shape[3], v.shape[3])
+        # N = bsz, S = 16, H = 128, W = 128,  C = 3, 
+        # H' = 4, W' = 4, T = 256, D = 512
 
-        frames_encoded = self.feature_model(video_frames.contiguous())
+        # Input [N x S x H x W x C]
 
-        #Output [N * S * D]
-        frames_encoded = frames_encoded.reshape(v.shape[0], -1,
-                                                *frames_encoded.shape[1:]).mean(dim=(3, 4))
+        # [(N * S) x C x H x W]
+        video_frames = v.reshape(-1, *v.shape[2:]).permute(0, 3, 1, 2)
 
-        # [N * T * D/S]
-        frames_encoded = frames_encoded.reshape(v.shape[0], self.target_len, -1)
+        # [(N * S) x H' x W' x D]
+        frames_encoded = self.feature_model(video_frames.contiguous()).permute(0, 2, 3, 1)
 
-        # [N * T * D]
-        frames_encoded = self.feature_mlp(frames_encoded)
+        # [N x S x H' x W' x D]
+        frames_encoded = frames_encoded.reshape(*v.shape[:2], *frames_encoded.shape[1:])
 
-        return frames_encoded
+        # [N x S x H' x W' x (D + P)]
+        frames_pos_encoded = position_embed_3d(frames_encoded)
 
-#Contains implementation from https://github.com/CannyLab/aai/blob/ddc76404bdfe15fb8218c31d9dc6859f3d5420db/aai/research/gptcaptions/models/encoders/predictive_byol.py
-class CAVE(torch.nn.Module):
+        # [N x T x (D+P)]
+        frames_mean = frames_pos_encoded.reshape(v.shape[0], -1, frames_pos_encoded.shape[-1])
+
+        # [N x T x D]
+        frames_features = self.feature_mlp(frames_mean)
+
+        return frames_features
+
+class LAVA(torch.nn.Module):
 
     def __init__(self, 
                 dropout=0.1,
-                model_dimension=128, 
+                model_dimension=512, 
                 feat_dimension=512,
                 seqlen=256,
-                batch_size=32, 
+                batch_size=64, 
                 learning_rate=1e-3,
                 num_heads=8, 
                 num_layers=2,):
 
-        super(CAVE, self).__init__()
+        super(LAVA, self).__init__()
 
         self._model_dimension = model_dimension
         self._feature_dimension = feat_dimension
@@ -182,25 +192,31 @@ class CAVE(torch.nn.Module):
                                 dropout=0.1,
                                 model_dimension=self._feature_dimension)
 
-
-
-        # lang feature model TO DO:
-        # self._lang_feature_model = LanguageFeatureModel()
+        self._text_feature_model = LanguageFeatureModel(
+                                dropout=0.1,
+                                model_dimension=self._feature_dimension)
 
         self._audio_token = torch.randn(self._batch_size, 1, self._feature_dimension)
 
         self._video_token = torch.randn(self._batch_size, 1, self._feature_dimension)
 
+        self._text_token = torch.randn(self._batch_size, 1, self._feature_dimension)
         
         self._audio_input_projection = torch.nn.Sequential(
-            torch.nn.BatchNorm1d(self._feature_dimension),
             torch.nn.Linear(self._feature_dimension, self._model_dimension),
+            torch.nn.BatchNorm1d(self._model_dimension),
             torch.nn.ReLU(),
         )
 
         self._video_input_projection = torch.nn.Sequential(
-            torch.nn.BatchNorm1d(self._feature_dimension),
             torch.nn.Linear(self._feature_dimension, self._model_dimension),
+            torch.nn.BatchNorm1d(self._model_dimension),
+            torch.nn.ReLU(),
+        )
+
+        self._text_input_projection = torch.nn.Sequential(
+            torch.nn.Linear(self._feature_dimension, self._model_dimension),
+            torch.nn.BatchNorm1d(self._model_dimension),
             torch.nn.ReLU(),
         )
 
@@ -229,7 +245,15 @@ class CAVE(torch.nn.Module):
             torch.nn.ReLU(),
             torch.nn.Linear(self._model_dimension, self._model_dimension),
         )
+        
         self._video_representation_mlp = torch.nn.Sequential(
+            torch.nn.Linear(self._model_dimension, self._model_dimension),
+            torch.nn.BatchNorm1d(self._model_dimension),
+            torch.nn.ReLU(),
+            torch.nn.Linear(self._model_dimension, self._model_dimension),
+        )
+
+        self._text_representation_mlp = torch.nn.Sequential(
             torch.nn.Linear(self._model_dimension, self._model_dimension),
             torch.nn.BatchNorm1d(self._model_dimension),
             torch.nn.ReLU(),
@@ -252,14 +276,21 @@ class CAVE(torch.nn.Module):
 
     def get_paramaters(self,):
         params = []
+
         params += list(self._audio_feature_model.parameters())
         params += list(self._video_feature_model.parameters())
+        params += list(self._text_feature_model.parameters())
+
         params += list(self._audio_input_projection.parameters())
         params += list(self._video_input_projection.parameters())
+        params += list(self._text_input_projection.parameters())
+
         params += list(self._audio_encoder.parameters())
         params += list(self._video_encoder.parameters())
+
         params += list(self._audio_representation_mlp.parameters())
         params += list(self._video_representation_mlp.parameters())
+        params += list(self._text_representation_mlp.parameters())
 
         return params
 
@@ -292,27 +323,111 @@ class CAVE(torch.nn.Module):
 
         return encoded
     
-    def forward(self, a, v):
-        # a,v = batch
-        a, v = self._feature_project(a, mode='audio'), self._feature_project(v, mode='video')
-        a, v = self._encode_sequence(a,self._seqlen, mode='audio'), self._encode_sequence(v,self._seqlen, mode='video')
-
+    def _encode_text(self, text):
+        text = self._text_feature_model(text.squeeze())
+        text = self._text_input_projection(text)
+        text = self._text_representation_mlp(text)
+        return text
+    
+    def forward(self, a, v, t):
+        a = self._feature_project(a, mode='audio')
+        a = self._encode_sequence(a,self._seqlen, mode='audio')
         a = torch.nn.functional.normalize(a, p=2, dim=-1)
+
+        v = self._feature_project(v, mode='video')
+        v = self._encode_sequence(v,self._seqlen, mode='video')
         v = torch.nn.functional.normalize(v, p=2, dim=-1)
 
-        #encoded views
-        return a, v
-    
-    def loss(self, a, v):
-        audio_loss = nce_loss(a, v) 
-        video_loss = nce_loss(v, a)
-        total_loss = audio_loss + video_loss
-                                                                             
+        t = self._encode_text(t)
+        t = torch.nn.functional.normalize(t, p=2, dim=-1)
 
+        return a, v, t
+    
+    def loss(self, a, v, t):
+        av_loss = 0.5*(nce_loss(a, v) + nce_loss(v, a))
+        at_loss = 0.5*(nce_loss(a, t) + nce_loss(t, a))
+        vt_loss = 0.5*(nce_loss(v, t) + nce_loss(t, v))
+        avt_loss = centroid_loss(a, v, t)
+
+        total_loss = av_loss + at_loss + vt_loss + avt_loss
+                                                                             
         metrics = {
-            'audio_loss': audio_loss,
-            'video_loss': video_loss,
+            'av_loss': av_loss,
+            'at_loss': at_loss,
+            'vt_loss': vt_loss,
+            'avt_loss': avt_loss,
             'total_loss': total_loss,
         }
-
         return metrics
+
+class LinearClassifierAVT(torch.nn.Module):
+    def __init__(self,
+                data=Kinetics700Data,
+                num_classes=700,
+                feature_dimension=512,
+                model_dimension=128,
+                num_modalities=3,
+                batch_size=32,
+                learning_rate=1e-3):
+
+        super(LinearClassifierAVT, self).__init__()
+
+        self.data = data
+        self.num_classes = num_classes
+        self.feature_dimension = feature_dimension
+        self.model_dimension = model_dimension
+        self.num_modalities = num_modalities
+        self.batch_size = batch_size
+        self.learning_rate = learning_rate
+
+        self.model_path = "/home/sgurram/Desktop/video_lava/lava/364ti9hv/checkpoints/epoch=30.ckpt"
+        self.model = LAVA()
+        self.model.load_state_dict(torch.load(self.model_path), strict=False)
+        self.model.eval()
+
+        self.a_feature_model = self.model._audio_feature_model
+        self.a_projection = self.model._audio_input_projection
+        self.a_encoder = self.model._audio_encoder
+
+        self.v_feature_model = self.model._video_feature_model
+        self.v_projection = self.model._video_input_projection
+        self.v_encoder = self.model._video_encoder
+
+        self.t_feature_model = self.model._text_feature_model
+        self.t_projection = self.model._text_input_projection
+
+        self.fc1 = torch.nn.Linear(self.num_modalities * self.model_dimension, self.num_classes)
+        # self.fc1 = torch.nn.Linear(self.model_dimension, self.num_classes)
+
+    def encode_audio(self, x):
+        x = self.a_feature_model(x)
+        x = self.a_projection(x.reshape(-1, self.feature_dimension)).reshape(
+                x.shape[0], x.shape[1], self.model_dimension)
+
+        x = self.a_encoder(src=x).mean(dim=1)
+        return x
+
+    def encode_video(self, x):
+        x = self.v_feature_model(x)
+        x = self.v_projection(x.reshape(-1, self.feature_dimension)).reshape(
+                x.shape[0], x.shape[1], self.model_dimension)
+
+        x = self.v_encoder(src=x).mean(dim=1)
+        return x
+    
+    def encode_text(self, x):
+        x = self.t_feature_model(x.squeeze())
+        x = self.t_projection(x)
+        return x
+    
+    def forward(self,  a, v, t):
+        with torch.no_grad():
+            a = self.encode_audio(a)
+            v = self.encode_video(v)
+            t = self.encode_text(t)
+            # print(any([p.requires_grad for p in [a, v, t]]))
+
+        # representation = torch.stack((a,v,t)).squeeze().mean(dim=0)
+        representation = torch.cat((a,v,t), dim=-1)
+        pred = self.fc1(representation)
+        return pred
