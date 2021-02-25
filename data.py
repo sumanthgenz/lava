@@ -14,15 +14,15 @@ from tqdm import tqdm
 
 import warnings
 import glob
-import gc 
+import gc
 import os
 import socket
 
-from augment import get_npy_paths
-from utils import create_kinetics_labels, get_kinetics_labels
+from aai.experimental.sgurram.lava.src.augment import get_npy_paths
+from aai.experimental.sgurram.lava.src.utils import create_kinetics_labels, get_kinetics_labels
 # from encoder import*
 
-torchaudio.set_audio_backend("sox_io") 
+torchaudio.set_audio_backend("sox_io")
 os.environ["IMAGEIO_FFMPEG_EXE"] = "/home/sgurram/anaconda3/bin/ffmpeg"
 warnings.filterwarnings("ignore")
 
@@ -44,7 +44,7 @@ class LAVAData(Dataset):
         """ Return audio, video, text features from npy files"""
         try:
             a, v, t = np.load(self.a_paths[idx]), np.load(self.v_paths[idx]), np.load(self.t_paths[idx])
-            a, v, t = torch.from_numpy(a), torch.from_numpy(v).to(dtype=torch.float), torch.from_numpy(t) 
+            a, v, t = torch.from_numpy(a), torch.from_numpy(v).to(dtype=torch.float), torch.from_numpy(t)
             return a, v, t
 
         except:
@@ -52,8 +52,8 @@ class LAVAData(Dataset):
             return torch.zeros(128, 2048), torch.zeros(16, 128, 128, 3), torch.zeros(1, 512)
 
 class Kinetics700Data(Dataset):
-    def __init__(self, 
-                prefix, 
+    def __init__(self,
+                prefix,
                 num_classes=700,
                 zero_shot=False):
 
@@ -130,7 +130,7 @@ if __name__ == '__main__':
     # batch_size = 64
     # lava_data = LAVAData("val")
     # model = LAVA()
-    # optimizer = torch.optim.Adam(model.parameters(), 
+    # optimizer = torch.optim.Adam(model.parameters(),
     #                             lr=model._learning_rate)
     # dataloader = torch.utils.data.DataLoader(lava_data,
     #                                         batch_size=batch_size,
@@ -160,7 +160,7 @@ if __name__ == '__main__':
     # optimizer.zero_grad()
     # end_optimizer = time.time()
 
-    # timings = {"load_batch": end_data_load - start_data_load, 
+    # timings = {"load_batch": end_data_load - start_data_load,
     #           "forward": end_forward - start_forward,
     #           "loss": end_loss - start_loss,
     #           "backward": end_backward - start_backward,
@@ -179,6 +179,6 @@ if __name__ == '__main__':
     # for k in labels:
     #     if not (0 <= labels[k][1] < 700):
     #         print(k, labels[k])
-            
+
     # train =  pickle.load(open("/home/sgurram/Desktop/kinetics/kinetics_train.pickle", "rb"))
     # print(train["27RMXJm71A8"])

@@ -14,17 +14,17 @@ import os
 import warnings
 import glob
 
-from utils import adjust_video_size, nan_filter, pad_spec, get_log_mel_spec
-from metrics import cosine_similarity
+from aai.experimental.sgurram.lava.src.utils import adjust_video_size, nan_filter, pad_spec, get_log_mel_spec
+from aai.experimental.sgurram.lava.src.metrics import cosine_similarity
 
-torchaudio.set_audio_backend("sox_io") 
+torchaudio.set_audio_backend("sox_io")
 os.environ["IMAGEIO_FFMPEG_EXE"] = "/home/sgurram/anaconda3/bin/ffmpeg"
 warnings.filterwarnings("ignore")
 
 def get_lava_features(save_dir=None,
-                    mp4_path=None, 
-                    text="default", 
-                    wav_path=None, 
+                    mp4_path=None,
+                    text="default",
+                    wav_path=None,
                     save=False,
                     guse_model=None):
 
@@ -34,7 +34,7 @@ def get_lava_features(save_dir=None,
         a = get_audio_from_wav(wav_path)
     else:
         a = get_audio_from_mp4(mp4_path)
-    
+
     if text:
         t = guse_model([text])
 
@@ -71,7 +71,7 @@ def get_video_from_mp4(path):
 
     vid = torch.from_numpy(vid)
     vid = adjust_video_size(vid)
-        
+
     vid = nan_filter(vid)
 
     #vid shape: [T x H x W x C], where T = 16, H = W = 128, C = 3
@@ -148,7 +148,7 @@ def get_audiovisual(path):
 
     vid = torch.from_numpy(vid)
     vid = adjust_video_size(vid)
-        
+
     aud = nan_filter(aud)
     vid = nan_filter(vid)
 
@@ -160,7 +160,7 @@ def numpy_processing(path):
     try:
         a, v = get_audiovisual(path)
 
-    except: 
+    except:
         print("Skipped: ", path)
         return
 
@@ -184,7 +184,7 @@ def save_npy_files(prefix):
         v_paths: (list -> str) paths to video feature npy files
         t_paths: (list -> str) paths to text feature npy files
 
-    Fetch paths to audio, video, text feature files for a given sample, 
+    Fetch paths to audio, video, text feature files for a given sample,
     if all 3 feature paths exist.
     """
 
@@ -194,11 +194,11 @@ def save_npy_files(prefix):
 
     for path in glob.glob(root):
         files.append(path)
-    
+
     cores = multiprocessing.cpu_count()
     with multiprocessing.Pool(cores) as p:
         list(tqdm(p.imap_unordered(numpy_process, files), total=len(files)))
-    
+
 def get_npy_paths(prefix, view_progress=False):
     """
     Args:
@@ -209,7 +209,7 @@ def get_npy_paths(prefix, view_progress=False):
         v_paths: (list -> str) paths to video feature npy files
         t_paths: (list -> str) paths to text feature npy files
 
-    Fetch paths to audio, video, text feature files for a given sample, 
+    Fetch paths to audio, video, text feature files for a given sample,
     if all 3 feature paths exist.
     """
     a_paths, v_paths, t_paths = [], [], []
@@ -228,9 +228,9 @@ def get_npy_paths(prefix, view_progress=False):
 
     for path in paths:
         filename = path.split('clipped/')[-1][:-4] + '.npy'
-        a_path = a_root + filename 
-        v_path = v_root + filename 
-        t_path = t_root + filename 
+        a_path = a_root + filename
+        v_path = v_root + filename
+        t_path = t_root + filename
         exists = [os.path.isfile(a_path), os.path.isfile(v_path), os.path.isfile(t_path)]
         if all(exists):
             a_paths.append(a_path)
@@ -277,7 +277,7 @@ if __name__ == '__main__':
     #     a, v = get_audiovisual(path)
     #     print("Audio Features Shape: ", a.shape)
     #     print("Video Features Shape: ", v.shape)
-    
+
     '''Verify Audiovisual Numpy Feature Files'''
     # for path in tqdm(file_paths[:5]):
     #     a_file, v_file = numpy_processing(path)

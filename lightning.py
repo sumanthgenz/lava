@@ -25,10 +25,11 @@ warnings.filterwarnings("ignore")
 
 class LAVALightning(pl.LightningModule):
 
-    def __init__(self,):
+    def __init__(self,logger):
         super().__init__()
 
         self.encoder = LAVA()
+        self.logger = logger
 
     def training_step(self, batch, batch_idx):
         audio, video, text = batch
@@ -45,51 +46,67 @@ class LAVALightning(pl.LightningModule):
         audio_encoded, video_encoded, text_encoded = self.encoder(audio, video, text)
         metrics = self.encoder.loss(audio_encoded, video_encoded, text_encoded)
 
-        return {'val_loss': metrics['total_loss'],
-                'val_avt_loss': metrics['avt_loss'],
+        return {'val_total_loss': metrics['total_loss'],
+                'val_a_loss': metrics['a_loss'],
+                'val_v_loss': metrics['v_loss'],
+                'val_t_loss': metrics['t_loss'],
                 'val_av_loss': metrics['av_loss'],
                 'val_at_loss': metrics['at_loss'],
-                'val_vt_loss': metrics['vt_loss'],}
+                'val_vt_loss': metrics['vt_loss'],
+                'val_avt_loss': metrics['avt_loss'],}
 
     def test_step(self, batch, batch_idx):
         audio, video, text = batch
         audio_encoded, video_encoded, text_encoded = self.encoder(audio, video, text)
         metrics = self.encoder.loss(audio_encoded, video_encoded, text_encoded)
 
-        return {'test_loss': metrics['total_loss'],
+        return {'test_total_loss': metrics['total_loss'],
                 'test_avt_loss': metrics['avt_loss'],
                 'test_av_loss': metrics['av_loss'],
                 'test_at_loss': metrics['at_loss'],
                 'test_vt_loss': metrics['vt_loss'],}
-
+                
+    
     def training_epoch_end(self, outputs):
-        avg_total_loss = torch.stack([m['logs']['loss'] for m in outputs]).mean()
-        avg_avt_loss = torch.stack([m['logs']['avt_loss'] for m in outputs]).mean()
+        avg_a_loss = torch.stack([m['logs']['a_loss'] for m in outputs]).mean()
+        avg_v_loss = torch.stack([m['logs']['v_loss'] for m in outputs]).mean()
+        avg_t_loss = torch.stack([m['logs']['t_loss'] for m in outputs]).mean()
         avg_av_loss = torch.stack([m['logs']['av_loss'] for m in outputs]).mean()
         avg_at_loss = torch.stack([m['logs']['at_loss'] for m in outputs]).mean()
         avg_vt_loss = torch.stack([m['logs']['vt_loss'] for m in outputs]).mean()
+        avg_avt_loss = torch.stack([m['logs']['avt_loss'] for m in outputs]).mean()
+        avg_total_loss = torch.stack([m['logs']['loss'] for m in outputs]).mean()
 
-        logs = {'train_loss': avg_total_loss,
-                'train_avt_loss': avg_avt_loss,
+  
+        logs = {'train_total_loss': avg_total_loss,
+                'train_a_loss': avg_a_loss,
+                'train_v_loss': avg_v_loss,
+                'train_t_loss': avg_t_loss,
                 'train_av_loss': avg_av_loss,
                 'train_at_loss': avg_at_loss,
-                'train_vt_loss': avg_vt_loss,}
-        
+                'train_vt_loss': avg_vt_loss,
+                'train_avt_loss': avg_avt_loss,}
+
         self.logger.log_metrics(logs)
-                
-    
+
     def validation_epoch_end(self, outputs):
-        avg_total_loss = torch.stack([m['val_loss'] for m in outputs]).mean()
-        avg_avt_loss = torch.stack([m['val_avt_loss'] for m in outputs]).mean()
+        avg_a_loss = torch.stack([m['val_a_loss'] for m in outputs]).mean()
+        avg_v_loss = torch.stack([m['val_v_loss'] for m in outputs]).mean()
+        avg_t_loss = torch.stack([m['val_t_loss'] for m in outputs]).mean()
         avg_av_loss = torch.stack([m['val_av_loss'] for m in outputs]).mean()
         avg_at_loss = torch.stack([m['val_at_loss'] for m in outputs]).mean()
         avg_vt_loss = torch.stack([m['val_vt_loss'] for m in outputs]).mean()
+        avg_avt_loss = torch.stack([m['val_avt_loss'] for m in outputs]).mean()
+        avg_total_loss = torch.stack([m['val_total_loss'] for m in outputs]).mean()
 
-        logs = {'val_loss': avg_total_loss,
-                'val_avt_loss': avg_avt_loss,
+        logs = {'val_total_loss': avg_total_loss,
+                'val_a_loss': avg_a_loss,
+                'val_v_loss': avg_v_loss,
+                'val_t_loss': avg_t_loss,
                 'val_av_loss': avg_av_loss,
                 'val_at_loss': avg_at_loss,
-                'val_vt_loss': avg_vt_loss,}
+                'val_vt_loss': avg_vt_loss,
+                'val_avt_loss': avg_avt_loss,}
         
         return {'val_total_loss': avg_total_loss, 'log': logs}
 

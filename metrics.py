@@ -11,7 +11,7 @@ import random
 #Vector-Wise
 
 def cosine_similarity(x,y):
-    x, y = x.cpu().numpy(), y.cpu().numpy()
+    x, y = x.detach().cpu().numpy(), y.detach().cpu().numpy()
     nx = np.linalg.norm(x)
     ny = np.linalg.norm(y)
     cos = np.dot(x, y)/(nx * ny)
@@ -33,6 +33,12 @@ def l2_distance(x,y):
 
 
 #Batch-Wise
+def instance_loss(x):
+    sim_matrix = torch.triu(torch.mm(x, x.t()), diagonal=-1)
+    # sim_matrix[torch.eye(len(x)).byte()] = 0
+    loss = sim_matrix.mean()
+    return loss
+
 def nce_loss(x, y):
     sim_matrix = torch.mm(x, y.t())
     pos_pairs = torch.arange(x.size(0)).to(sim_matrix.device)
@@ -45,8 +51,20 @@ def centroid_loss(x, y, z):
     x_loss = l2_distance(x, centroid).mean()
     y_loss = l2_distance(y, centroid).mean()
     z_loss = l2_distance(z, centroid).mean()
-    loss = (x_loss + y_loss + z_loss)/3
-    return loss
+    positive_loss = x_loss + y_loss + z_loss
+
+    negative_loss = 0
+    for i in range(1, len(centroid)):
+        for k in range(i):
+            negative_loss += cosine_similarity(centroid[i], centroid[k])
+
+    bsz = x.shape[0]
+    neg_loss_weight = 2/(bsz**2)
+    pos_loss_weight = 1/bsz
+    loss_scaling = 1
+
+    loss = (neg_loss_weight * negative_loss) + (pos_loss_weight * positive_loss)
+    return loss_scaling * loss
 
 # lalign and lunif from https://arxiv.org/pdf/2005.10242.pdf
 def lalign(x, y, alpha=2):
@@ -81,5 +99,3 @@ if __name__ == "__main__":
 
     print(centroid_loss(a, v, t))
     print(nce_loss(a,v))
-
-    print(*(list(torchvision.models.resnet18(pretrained=True).children())[:-2]))

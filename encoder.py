@@ -17,7 +17,7 @@ import os
 import sys
 
 from data import LAVAData, Kinetics700Data
-from metrics import nce_loss, centroid_loss
+from metrics import nce_loss, centroid_loss, instance_loss
 from utils import get_src_conditional_mask, position_embed, position_embed_3d
 # from aai.alexandria.layers.functional.positional_embedding import position_embed, position_embed_3d
 
@@ -108,28 +108,32 @@ class VideoFeatureModel(torch.nn.Module):
                 dropout=0.1, 
                 model_dimension=512,
                 seq_len=16,
-                target_len=256,
+                #target_len=256,
+                feature_map_spatial_shape=(4,4),
                 position_emb_len=48):
 
         super(VideoFeatureModel, self).__init__()
 
         self.model_dimension = model_dimension
-        self.seq_len = seq_len
-        self.target_len = target_len
+        self.temporal_seq_len = seq_len
+        #self.target_len = target_len
         self.position_emb_len = 48
 
         self.drop = dropout
 
-        self.resnet_model = torchvision.models.resnet18(pretrained=True)
+        self.resnet_model = torchvision.models.resnet18(pretrained=True).train()
 
         self.feature_model = torch.nn.Sequential(
             *(list(self.resnet_model.children())[:-2]))
+
+        # target_len 
+        self.spatial_temporal_seq_len = feature_map_spatial_shape[0] * feature_map_spatial_shape[1] * self.temporal_seq_len # flattening spatial dim
 
         # 560 -> 512 -> 512
         self.feature_mlp = torch.nn.Sequential(
             torch.nn.Linear(self.model_dimension + self.position_emb_len, self.model_dimension),
             torch.nn.Dropout(p=self.drop),
-            torch.nn.BatchNorm1d(self.target_len),
+            torch.nn.BatchNorm1d(self.spatial_temporal_seq_len),
             torch.nn.ReLU(),
             torch.nn.Linear(self.model_dimension, self.model_dimension),
         )
@@ -139,27 +143,35 @@ class VideoFeatureModel(torch.nn.Module):
         # N = bsz, S = 16, H = 128, W = 128,  C = 3, 
         # H' = 4, W' = 4, T = 256, D = 512
 
-        # Input [N x S x H x W x C]
+        #input (N, T, H, W, C) --> (N, T_1, D) which will be used as an input to the transformer
 
-        # [(N * S) x C x H x W]
-        video_frames = v.reshape(-1, *v.shape[2:]).permute(0, 3, 1, 2)
+        # (N * S , C, H,  W]
+        video_frames = v.reshape(v.shape[0] * v.shape[1], v.shape[2], v.shape[3], v.shape[4]).permute(0, 3, 1, 2)
 
-        # [(N * S) x H' x W' x D]
+        # (N * S, H_1, W_1, F]
         frames_encoded = self.feature_model(video_frames.contiguous()).permute(0, 2, 3, 1)
 
-        # [N x S x H' x W' x D]
-        frames_encoded = frames_encoded.reshape(*v.shape[:2], *frames_encoded.shape[1:])
+        # (N, S,  H_1, W_1, F]
+        frames_encoded = frames_encoded.reshape(v.shape[0], 
+                                                v.shape[1], 
+                                                frames_encoded.shape[1], 
+                                                frames_encoded.shape[2], 
+                                                frames_encoded.shape[3])
 
-        # [N x S x H' x W' x (D + P)]
-        frames_pos_encoded = position_embed_3d(frames_encoded)
+        # (N, S, H_1, W_1, (F + P)]
+        frames_pos_encoded = position_embed_3d(frames_encoded) # concat = True
 
-        # [N x T x (D+P)]
-        frames_mean = frames_pos_encoded.reshape(v.shape[0], -1, frames_pos_encoded.shape[-1])
+        # (N, S* H_1 * W_1 = T, (F+P)]
+        frames_mean = frames_pos_encoded.reshape(v.shape[0], 
+                                                 frames_pos_encoded.shape[1] * frames_encoded.shape[2] * frames_encoded.shape[3],
+                                                 frames_pos_encoded.shape[4])
 
-        # [N x T x D]
+        # (N, T, F+P)
         frames_features = self.feature_mlp(frames_mean)
 
         return frames_features
+
+
 
 class LAVA(torch.nn.Module):
 
@@ -168,10 +180,10 @@ class LAVA(torch.nn.Module):
                 model_dimension=512, 
                 feat_dimension=512,
                 seqlen=256,
-                batch_size=64, 
-                learning_rate=1e-3,
-                num_heads=8, 
-                num_layers=2,):
+                batch_size=32, 
+                learning_rate=3e-4,
+                num_heads=4, 
+                num_layers=4,):
 
         super(LAVA, self).__init__()
 
@@ -344,14 +356,30 @@ class LAVA(torch.nn.Module):
         return a, v, t
     
     def loss(self, a, v, t):
+        normalize = 7*(self._batch_size**2) + 3*self._batch_size
+        instance_weight = 5*(self._batch_size**2)/normalize 
+        nce_weight = 5*(self._batch_size**2)/normalize 
+        centroid_weight = 5*((self._batch_size**2) + (3*self._batch_size))/normalize
+
+        a_loss = instance_loss(a)
+        v_loss = instance_loss(v)
+        t_loss = instance_loss(t)
+
         av_loss = 0.5*(nce_loss(a, v) + nce_loss(v, a))
         at_loss = 0.5*(nce_loss(a, t) + nce_loss(t, a))
         vt_loss = 0.5*(nce_loss(v, t) + nce_loss(t, v))
+
         avt_loss = centroid_loss(a, v, t)
 
-        total_loss = av_loss + at_loss + vt_loss + avt_loss
-                                                                             
+
+        # total_loss = av_loss + at_loss + vt_loss + avt_loss
+        # total_loss = av_loss + at_loss + vt_loss
+        total_loss = instance_weight*(a_loss + v_loss + t_loss) + nce_weight*(av_loss + at_loss + vt_loss) + centroid_weight*(avt_loss)
+
         metrics = {
+            'a_loss': a_loss,
+            'v_loss': v_loss,
+            't_loss': t_loss,
             'av_loss': av_loss,
             'at_loss': at_loss,
             'vt_loss': vt_loss,
@@ -365,7 +393,7 @@ class LinearClassifierAVT(torch.nn.Module):
                 data=Kinetics700Data,
                 num_classes=700,
                 feature_dimension=512,
-                model_dimension=128,
+                model_dimension=512,
                 num_modalities=3,
                 batch_size=32,
                 learning_rate=1e-3):
@@ -380,10 +408,12 @@ class LinearClassifierAVT(torch.nn.Module):
         self.batch_size = batch_size
         self.learning_rate = learning_rate
 
-        self.model_path = "/home/sgurram/Desktop/video_lava/lava/364ti9hv/checkpoints/epoch=30.ckpt"
+        # self.model_path = "/home/sgurram/Desktop/video_lava/lava/spfvxt52/checkpoints/epoch=28.ckpt"
+        # self.model_path = "/home/sgurram/Desktop/video_lava/lava/10w32ijn/checkpoints/epoch=10.ckpt"
         self.model = LAVA()
-        self.model.load_state_dict(torch.load(self.model_path), strict=False)
-        self.model.eval()
+        # self.model.load_state_dict(torch.load(self.model_path), strict=False)
+        # self.model.eval()
+        print(self.model._model_dimension)
 
         self.a_feature_model = self.model._audio_feature_model
         self.a_projection = self.model._audio_input_projection
@@ -421,13 +451,56 @@ class LinearClassifierAVT(torch.nn.Module):
         return x
     
     def forward(self,  a, v, t):
-        with torch.no_grad():
-            a = self.encode_audio(a)
-            v = self.encode_video(v)
-            t = self.encode_text(t)
-            # print(any([p.requires_grad for p in [a, v, t]]))
+        # with torch.no_grad():
+        a = self.encode_audio(a)
+        v = self.encode_video(v)
+        t = self.encode_text(t)
+        # print(any([p.requires_grad for p in [a, v, t]]))
 
         # representation = torch.stack((a,v,t)).squeeze().mean(dim=0)
+        # a, v, t = torch.rand(32, 512).cuda(), torch.rand(32, 512).cuda(), torch.rand(32, 512).cuda()
         representation = torch.cat((a,v,t), dim=-1)
         pred = self.fc1(representation)
+        return pred
+
+
+class SupervisedVideoClassifier(torch.nn.Module):
+    def __init__(self,
+                data=Kinetics700Data,
+                num_classes=700,
+                feature_dimension=512,
+                model_dimension=512,
+                num_modalities=3,
+                batch_size=32,
+                learning_rate=1e-3):
+
+        super(SupervisedVideoClassifier, self).__init__()
+
+        self.data = data
+        self.num_classes = num_classes
+        self.feature_dimension = feature_dimension
+        self.model_dimension = model_dimension
+        self.num_modalities = num_modalities
+        self.batch_size = batch_size
+        self.learning_rate = learning_rate
+
+        self.model = LAVA()
+
+        self.v_feature_model = self.model._video_feature_model
+        self.v_projection = self.model._video_input_projection
+        self.v_encoder = self.model._video_encoder
+
+        self.fc1 = torch.nn.Linear(self.model_dimension, self.num_classes)
+
+    def encode_video(self, x):
+        x = self.v_feature_model(x)
+        x = self.v_projection(x.reshape(-1, self.feature_dimension)).reshape(
+                x.shape[0], x.shape[1], self.model_dimension)
+
+        x = self.v_encoder(src=x).mean(dim=1)
+        return x   
+    
+    def forward(self,  a, v, t):
+        v_encoded = self.encode_video(v)
+        pred = self.fc1(v_encoded)
         return pred

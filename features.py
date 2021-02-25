@@ -15,16 +15,18 @@ import os
 import warnings
 import glob
 
-from encoder import LAVA
-from utils import get_src_conditional_mask, position_embed, position_embed_3d
-from metrics import cosine_similarity
+from aai.experimental.sgurram.lava.src.encoder import LAVA
+from aai.experimental.sgurram.lava.src.utils import get_src_conditional_mask, position_embed, position_embed_3d
+from aai.experimental.sgurram.lava.src.metrics import cosine_similarity
 
 class LAVAFeatures():
 
-    def __init__(self):
+    def __init__(self,
+                 lava_model_path="/home/sgurram/Desktop/video_lava/lava/10w32ijn/checkpoints/epoch=10.ckpt",
+                 guse_model_path="https://tfhub.dev/google/universal-sentence-encoder/4"):
 
-        self.guse_model_path = "https://tfhub.dev/google/universal-sentence-encoder/4"
-        self.lava_model_path = "/home/sgurram/Desktop/video_lava/lava/364ti9hv/checkpoints/epoch=30.ckpt"
+        self.guse_model_path = guse_model_path
+        self.lava_model_path = lava_model_path
 
         self.guse_model = hub.load(self.guse_model_path)
         self.lava_model = LAVA()
@@ -85,12 +87,13 @@ class LAVAFeatures():
         a, v, t = None, None, None
 
         # encoding data with lava to get features (if any)
-        if audio is not None:
-            a = self.encode_audio(audio.unsqueeze(0)).squeeze()
-        if video is not None:
-            v = self.encode_video(video.to(dtype=torch.float).unsqueeze(0)).squeeze()
-        if text is not None:
-            t = self.encode_text(text)
+        with torch.no_grad():
+            if audio is not None:
+                a = self.encode_audio(audio.unsqueeze(0)).squeeze().detach().cpu().numpy()
+            if video is not None:
+                v = self.encode_video(video.to(dtype=torch.float).unsqueeze(0)).squeeze().detach().cpu().numpy()
+            if text is not None:
+                t = self.encode_text(text).detach().cpu().numpy()
         if save:
             filename = (mp4_path.split('/')[-1]).split('.')[0]
             a_path = '{}/audio'.format(save_dir)
@@ -255,28 +258,48 @@ class LAVAFeatures():
 
 if __name__ == "__main__":
 
-    # lf = LAVAFeatures().lava_model
-    lf = LAVA()
+    lf = LAVAFeatures()
 
     wav_path = "/big/kinetics_audio/train/25_riding a bike/3->-merlXJp4m4c.wav"
     mp4_path = "/big/sgurram/kinetics_downsample/val/CIRUvo_OGv4.mp4"
     npy_path = "/big/sgurram/kinetics_numpy/val/video/CIRUvo_OGv4.npy"
 
+    # path1 = "/big/sgurram/kinetics_downsample/val/CIRUvo_OGv4.mp4"
+    # path2 = "/big/sgurram/kinetics_downsample/train/-JMdI8PKvsc.mp4"	             
+    path1 = "/big/sgurram/kinetics_downsample/train/L3lKNeY5mIs.mp4"	   
+    path2 = "/big/sgurram/kinetics_downsample/val/Zp44Wj7soCE.mp4"	 
+    # path2 = "/big/sgurram/kinetics_downsample/val/oTCio7AcabE.mp4"
+
+
     # for _ in tqdm(range(25)):
     #     a1, v1, t1 = lf.get_lava_features(mp4_path=mp4_path, text_input="this is a video of a dog")
+
+    a1, v1, t1 = lf.get_lava_features(mp4_path=path1, text_input="this is a video of a dog")
+    a1, v1, t1 = torch.from_numpy(a1), torch.from_numpy(v1), torch.from_numpy(t1)
+
+    a2, v2, t2 = lf.get_lava_features(mp4_path=path2, text_input="this is a video of something")
+    a2, v2, t2 = torch.from_numpy(a2), torch.from_numpy(v2), torch.from_numpy(t2)
 
     # print(a1.shape)
     # print(v1.shape)
     # print(t1.shape)
 
-    # print(cosine_similarity(a1, v1))
-    # print(cosine_similarity(a1, t1))
-    # print(cosine_similarity(v1, t1))
+    print(cosine_similarity(a1, v1))
+    print(cosine_similarity(a1, t1))
+    print(cosine_similarity(v1, t1))
+    print("")
+    print(cosine_similarity(a2, v2))
+    print(cosine_similarity(a2, t2))
+    print(cosine_similarity(v2, t2))
+    print("")
+    print(cosine_similarity(a1, a2))
+    print(cosine_similarity(v1, v2))
+    print(cosine_similarity(t1, t2))
 
-    v_features = torch.from_numpy(np.load(npy_path)).to(dtype=torch.float)
+    # v_features = torch.from_numpy(np.load(npy_path)).to(dtype=torch.float)
 
-    v = lf._video_feature_model(torch.stack((v_features, v_features)))
-    print(v.shape)
+    # v = lf._video_feature_model(torch.stack((v_features, v_features)))
+    # print(v.shape)
 
     # x = torch.arange(64).reshape((2, 2, 4, 4))
     # print(x)

@@ -17,6 +17,7 @@ torchaudio.set_audio_backend("sox_io")
 warnings.filterwarnings("ignore")
 
 from lightning import LAVALightning, EvalLightning
+from encoder import SupervisedVideoClassifier
 
 wandb_logger = WandbLogger(name='run',project='lava')
 
@@ -57,7 +58,7 @@ flags.DEFINE_integer('log_freq',
                     help='number of batches in between logging gradients',)
 
 def train_lava():
-        model = LAVALightning()
+        model = LAVALightning(logger=wandb_logger)
 
 
     # FLAGS for instaniating trainer
@@ -73,9 +74,9 @@ def train_lava():
     #         distributed_backend=FLAGS.backend,
     #         logger=wandb_logger,)   
 
-        # wandb_logger.watch(model, 
-        #     log=FLAGS.log, 
-        #     log_freq=FLAGS.log_freq)
+    #     wandb_logger.watch(model, 
+    #         log=FLAGS.log, 
+    #         log_freq=FLAGS.log_freq)
 
         wandb_logger.watch(model, 
                 log='gradients', 
@@ -83,24 +84,27 @@ def train_lava():
 
         # wandb_logger = None
 
+
         hyperparams = {'gpus':[1], 
                 'max_epochs': 25, 
                 'batch_size': model.encoder._batch_size,
-                'accumulate_grad_batches': 80,
+                'accumulate_grad_batches': 8,
                 'learning_rate': model.encoder._learning_rate,
                 'feature_dimension': model.encoder._feature_dimension,
-                'model_dimension': model.encoder._model_dimension,
+                'model_dimension': model.encoder._learning_rate,
                 'seq_len': model.encoder._seqlen,
                 'num_transformer_layers': model.encoder._num_layers,
                 'num_transformer_layers': model.encoder._num_heads,
                 'optimizer': 'Adam',
                 'scheduler': 'n/a',}
 
+        wandb_logger.log_hyperparams(hyperparams)
+
         trainer = pl.Trainer(
                 default_root_dir='/home/sgurram/Desktop/video_lava', 
                 gpus=[1], 
                 max_epochs=100, 
-                accumulate_grad_batches=80,
+                accumulate_grad_batches=8,
                 logger=wandb_logger,
                 profiler=True) 
         
@@ -133,6 +137,42 @@ def train_classifier():
 
         trainer = pl.Trainer(
                 default_root_dir='/home/sgurram/Desktop/video_lava_classifier', 
+                gpus=[1], 
+                max_epochs=25, 
+                accumulate_grad_batches=8,
+                logger=wandb_logger,
+                overfit_batches=500,
+                profiler=True) 
+        
+        trainer.fit(model)
+
+def train_supervised_video_encoder():
+        # wandb_logger = None
+
+        model = EvalLightning(logger=wandb_logger, classifier=SupervisedVideoClassifier)
+
+        hyperparams = {'gpus':[1], 
+                'max_epochs': 25, 
+                'batch_size': model.classifier.batch_size,
+                'accumulate_grad_batches': 8,
+                'learning_rate': model.classifier.learning_rate,
+                'feature_dimension': model.classifier.feature_dimension,
+                'model_dimension': model.classifier.model_dimension,
+                'num_modalities': 3,
+                'type_modalities': 'v', 
+                 'optimizer': 'Adam',
+                'scheduler': 'n/a',}
+        
+
+        wandb_logger.watch(model, 
+                log='gradients', 
+                log_freq=10)
+
+        wandb_logger.log_hyperparams(hyperparams)
+
+
+        trainer = pl.Trainer(
+                default_root_dir='/home/sgurram/Desktop/video_lava_classifier', 
                 gpus=[0], 
                 max_epochs=25, 
                 accumulate_grad_batches=8,
@@ -148,4 +188,5 @@ if __name__ == '__main__':
     FLAGS = flags.FLAGS 
 #     train_classifier()
     train_lava()
+#     train_supervised_video_encoder()
 
