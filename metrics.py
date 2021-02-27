@@ -45,8 +45,26 @@ def nce_loss(x, y):
     loss = torch.nn.functional.cross_entropy(sim_matrix, pos_pairs)
     return loss
 
-def centroid_loss(x, y, z):
+def centroid_loss(x, y, z, mode="nce"):
     #compute centroid as arithmetic mean of latent vectors x, y, z
+    if mode=="positive":
+        return centroid_positive_loss(x,y,z)
+    if mode=="contrastive":
+        return centroid_contrastive_loss(x,y,z)
+    if mode=="nce":
+        return centroid_nce_loss(x,y,z)        
+    else:
+        return
+
+def centroid_positive_loss(x, y, z):
+    centroid = (x + y + z)/3
+    x_loss = l2_distance(x, centroid).mean()
+    y_loss = l2_distance(y, centroid).mean()
+    z_loss = l2_distance(z, centroid).mean()
+    positive_loss = x_loss + y_loss + z_loss
+    return positive_loss
+
+def centroid_contrastive_loss(x, y, z):
     centroid = (x + y + z)/3
     x_loss = l2_distance(x, centroid).mean()
     y_loss = l2_distance(y, centroid).mean()
@@ -65,6 +83,11 @@ def centroid_loss(x, y, z):
 
     loss = (neg_loss_weight * negative_loss) + (pos_loss_weight * positive_loss)
     return loss_scaling * loss
+
+def centroid_nce_loss(x, y, z):
+    centroid = (x + y + z)/3
+    nce_losses = nce_loss(x, centroid) + nce_loss(y, centroid) + nce_loss(z, centroid)
+    return nce_losses
 
 # lalign and lunif from https://arxiv.org/pdf/2005.10242.pdf
 def lalign(x, y, alpha=2):
