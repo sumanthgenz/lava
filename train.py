@@ -16,8 +16,8 @@ from absl import app, flags
 torchaudio.set_audio_backend("sox_io")
 warnings.filterwarnings("ignore")
 
-from lightning import LAVALightning, EvalLightning
-from encoder import SupervisedVideoClassifier
+from aai.experimental.sgurram.lava.src.lightning import LAVALightning, EvalLightning
+from aai.experimental.sgurram.lava.src.encoder import SupervisedVideoClassifier
 
 wandb_logger = WandbLogger(name='run',project='lava')
 
@@ -104,7 +104,8 @@ def train_lava():
                 default_root_dir='/home/sgurram/Desktop/video_lava', 
                 gpus=[1], 
                 max_epochs=100, 
-                accumulate_grad_batches=8,
+                accumulate_grad_batches=1,
+                overfit_batches=10,
                 logger=wandb_logger,
                 profiler=True) 
         
@@ -115,7 +116,7 @@ def train_classifier():
 
         model = EvalLightning(logger=wandb_logger)
 
-        hyperparams = {'gpus':[1], 
+        hyperparams = {'gpus':[0], 
                 'max_epochs': 25, 
                 'batch_size': model.classifier.batch_size,
                 'accumulate_grad_batches': 8,
@@ -141,7 +142,7 @@ def train_classifier():
                 max_epochs=25, 
                 accumulate_grad_batches=8,
                 logger=wandb_logger,
-                overfit_batches=500,
+                overfit_batches=100,
                 profiler=True) 
         
         trainer.fit(model)
