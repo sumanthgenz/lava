@@ -22,7 +22,7 @@ from aai.experimental.sgurram.lava.src.metrics import cosine_similarity
 class LAVAFeatures():
 
     def __init__(self,
-                 lava_model_path="/home/sgurram/Desktop/video_lava/lava/10w32ijn/checkpoints/epoch=10.ckpt",
+                 lava_model_path="/home/sgurram/Desktop/video_lava/lava/2hq4bjww/checkpoints/epoch=15.ckpt",
                  guse_model_path="https://tfhub.dev/google/universal-sentence-encoder/4"):
 
         self.guse_model_path = guse_model_path
@@ -30,8 +30,8 @@ class LAVAFeatures():
 
         self.guse_model = hub.load(self.guse_model_path)
         self.lava_model = LAVA()
-        self.lava_model.load_state_dict(torch.load(self.lava_model_path), strict=False)
-        self.lava_model.cuda()
+        self.lava_model.load_state_dict(torch.load(self.lava_model_path, map_location='cpu'), strict=False)
+        self.lava_model
         self.lava_model.eval()
 
         self.a_feature_model = self.lava_model._audio_feature_model
@@ -74,15 +74,15 @@ class LAVAFeatures():
 
         # loading data for audio, video, text (if any)
         if wav_path:
-            audio = self.get_audio_from_wav(wav_path).cuda()
+            audio = self.get_audio_from_wav(wav_path)
         else:
-            audio = self.get_audio_from_mp4(mp4_path).cuda()
+            audio = self.get_audio_from_mp4(mp4_path)
 
         if mp4_path:
-            video = self.get_video_from_mp4(mp4_path).cuda()
+            video = self.get_video_from_mp4(mp4_path)
 
         if text_input:
-            text = torch.from_numpy(self.guse_model([text_input]).numpy()).cuda()
+            text = torch.from_numpy(self.guse_model([text_input]).numpy())
 
         a, v, t = None, None, None
 
@@ -113,6 +113,7 @@ class LAVAFeatures():
                     x.shape[0], x.shape[1], self.model_dimension)
 
             x = self.a_encoder(src=x).mean(dim=1)
+        x = torch.nn.functional.normalize(x, p=2, dim=-1)
         return x
 
 
@@ -123,12 +124,15 @@ class LAVAFeatures():
                     x.shape[0], x.shape[1], self.model_dimension)
 
             x = self.v_encoder(src=x).mean(dim=1)
+        x = torch.nn.functional.normalize(x, p=2, dim=-1)
         return x
 
     def encode_text(self, x):
         with torch.no_grad():
             x = self.t_feature_model(x)
             x = self.t_projection(x).squeeze()
+
+        x = torch.nn.functional.normalize(x, p=2, dim=-1)
         return x
 
     def remove_batchnorm(self, model, layer_idx):
@@ -264,11 +268,11 @@ if __name__ == "__main__":
     mp4_path = "/big/sgurram/kinetics_downsample/val/CIRUvo_OGv4.mp4"
     npy_path = "/big/sgurram/kinetics_numpy/val/video/CIRUvo_OGv4.npy"
 
-    # path1 = "/big/sgurram/kinetics_downsample/val/CIRUvo_OGv4.mp4"
+    path1 = "/big/sgurram/kinetics_downsample/val/CIRUvo_OGv4.mp4"
     # path2 = "/big/sgurram/kinetics_downsample/train/-JMdI8PKvsc.mp4"	             
-    path1 = "/big/sgurram/kinetics_downsample/train/L3lKNeY5mIs.mp4"	   
-    path2 = "/big/sgurram/kinetics_downsample/val/Zp44Wj7soCE.mp4"	 
-    # path2 = "/big/sgurram/kinetics_downsample/val/oTCio7AcabE.mp4"
+    # path1 = "/big/sgurram/kinetics_downsample/train/L3lKNeY5mIs.mp4"	   
+    # path2 = "/big/sgurram/kinetics_downsample/val/Zp44Wj7soCE.mp4"	 
+    path2 = "/big/sgurram/kinetics_downsample/val/oTCio7AcabE.mp4"
 
 
     # for _ in tqdm(range(25)):
@@ -280,21 +284,38 @@ if __name__ == "__main__":
     a2, v2, t2 = lf.get_lava_features(mp4_path=path2, text_input="this is a video of something")
     a2, v2, t2 = torch.from_numpy(a2), torch.from_numpy(v2), torch.from_numpy(t2)
 
+    sample_1 = torch.stack((a1, v1, t1))
+    sample_2 = torch.stack((a2, v2, t2))
+
     # print(a1.shape)
     # print(v1.shape)
     # print(t1.shape)
 
+    print("Sample 1 Pairwise Modal Comparisons")
     print(cosine_similarity(a1, v1))
     print(cosine_similarity(a1, t1))
     print(cosine_similarity(v1, t1))
-    print("")
+    print("Sample 2 Pairwise Modal Comparisons")
     print(cosine_similarity(a2, v2))
     print(cosine_similarity(a2, t2))
     print(cosine_similarity(v2, t2))
-    print("")
+    print("Sample 1 and 2 Different Modal Comparisons")
+    print(cosine_similarity(a1, v2))
+    print(cosine_similarity(v1, t2))
+    print(cosine_similarity(t1, a2))
+    print("Sample 1 and 2 Same Modal Comparisons")
     print(cosine_similarity(a1, a2))
     print(cosine_similarity(v1, v2))
     print(cosine_similarity(t1, t2))
+
+    # print(sample_1.shape)
+    # print(sample_2.shape)
+    # print(torch.mm(sample_1, sample_1.t()))
+    # print(torch.mm(sample_2, sample_2.t()))
+    # print(torch.mm(sample_1, sample_2.t()))
+
+    # print(v1)
+    # print(v2)
 
     # v_features = torch.from_numpy(np.load(npy_path)).to(dtype=torch.float)
 

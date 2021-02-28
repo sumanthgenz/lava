@@ -16,9 +16,9 @@ import copy
 import os
 import sys
 
-from data import LAVAData, Kinetics700Data
-from metrics import nce_loss, centroid_loss, instance_loss
-from utils import get_src_conditional_mask, position_embed, position_embed_3d
+from aai.experimental.sgurram.lava.src.data import LAVAData, Kinetics700Data
+from aai.experimental.sgurram.lava.src.metrics import nce_loss, centroid_loss, instance_loss
+from aai.experimental.sgurram.lava.src.utils import get_src_conditional_mask, position_embed, position_embed_3d
 # from aai.alexandria.layers.functional.positional_embedding import position_embed, position_embed_3d
 
 torchaudio.set_audio_backend("sox_io")
@@ -55,7 +55,7 @@ class AudioFeatureModel(torch.nn.Module):
 
         self.mel_freq = 128
         self.model_dimension = model_dimension
-        self.time_stpes = 300
+        self.seq_len = 256
 
         self.conv1 = torch.nn.Conv1d(
                     in_channels=self.mel_freq, 
@@ -71,7 +71,7 @@ class AudioFeatureModel(torch.nn.Module):
                     stride=2,
         )
 
-        self.pool1 = torch.nn.MaxPool1d(
+        self.pool1 = torch.nn.AvgPool1d(
                 kernel_size=2,
                 stride=2,
         )
@@ -80,7 +80,7 @@ class AudioFeatureModel(torch.nn.Module):
         self.relu = torch.nn.ReLU()
         self.tanh = torch.nn.Tanh()
         self.bn = torch.nn.BatchNorm1d(num_features=self.model_dimension)
-        self.ln = torch.nn.LayerNorm(normalized_shape=(self.model_dimension, self.time_stpes))
+        self.ln = torch.nn.LayerNorm(normalized_shape=(self.model_dimension, self.seq_len))
 
         self.audio_conv = nn.Sequential(
                 self.conv1,
@@ -92,14 +92,72 @@ class AudioFeatureModel(torch.nn.Module):
                 self.relu,
         )
 
-    def forward(self, a):
-        #Input [N * C * T]
 
+        self.feature_mlp = torch.nn.Sequential(
+            torch.nn.Linear(self.model_dimension, self.model_dimension),
+            torch.nn.Dropout(p=0.1),
+            torch.nn.BatchNorm1d(self.model_dimension),
+            torch.nn.ReLU(),
+            torch.nn.Linear(self.model_dimension, self.model_dimension),
+        )
+
+
+        # self.conv1 = torch.nn.Conv2d(
+        #             in_channels=1, 
+        #             out_channels=64, 
+        #             kernel_size=2, 
+        #             stride=2,
+        # )
+
+        # self.conv2 = torch.nn.Conv2d(
+        #             in_channels=64, 
+        #             out_channels=8, 
+        #             kernel_size=2,
+        #             stride=2,
+        # )
+
+        # self.pool1 = torch.nn.AvgPool2d(
+        #         kernel_size=2,
+        #         stride=2,
+        # )
+
+        # self.drop = torch.nn.Dropout(p=0.1)
+        # self.relu = torch.nn.ReLU()
+        # self.tanh = torch.nn.Tanh()
+        # self.bn1 = torch.nn.BatchNorm2d(64)
+        # self.bn2 = torch.nn.BatchNorm2d(8)
+        # self.ln = torch.nn.LayerNorm(normalized_shape=(self.model_dimension, self.seq_len))
+
+        # self.audio_conv = nn.Sequential(
+        #         self.conv1,
+        #         self.pool1,
+        #         self.bn1,
+        #         self.relu,
+        #         self.conv2,
+        #         self.bn2,
+        #         self.relu,
+        # )
+
+        # self.feature_mlp = torch.nn.Sequential(
+        #     torch.nn.Linear(16, 256),
+        #     torch.nn.Dropout(p=0.1),
+        #     torch.nn.BatchNorm1d(self.seq_len),
+        #     torch.nn.ReLU(),
+        #     torch.nn.Linear(256, self.model_dimension),
+        # )
+
+    def forward(self, a):
+        #Input [N x C x T]
         audio_encoded = self.audio_conv(a)
         audio_encoded = audio_encoded.permute(0,2,1)
         audio_encoded = position_embed(audio_encoded)
+        #Output [N x T x D]
 
-        #Output [N * T * D]
+
+        # audio_encoded = self.audio_conv(a.unsqueeze(1)).mean(dim=1)
+        # audio_encoded = audio_encoded.permute(0,2,1)
+        # auido_encoded = self.feature_mlp(audio_encoded)
+        # audio_encoded = position_embed(audio_encoded)
         return audio_encoded
 
 #Contains implemenation from https://github.com/CannyLab/aai/blob/e51bc4f0926530c39f289a948e0a1daebed3475a/aai/research/gptcaptions/models/encoders/predictive_byol.py#L21
@@ -181,7 +239,7 @@ class LAVA(torch.nn.Module):
                 feat_dimension=512,
                 seqlen=256,
                 batch_size=32, 
-                learning_rate=3e-4,
+                learning_rate=3e-2,
                 num_heads=4, 
                 num_layers=4,):
 
@@ -371,20 +429,36 @@ class LAVA(torch.nn.Module):
 
         avt_loss = centroid_loss(a, v, t)
 
+        cos_sim = torch.nn.CosineSimilarity()
+        av_cos_sim = cos_sim(a, v).mean()
+        at_cos_sim = cos_sim(a, t).mean()
+        vt_cos_sim = cos_sim(v, t).mean()
+
+        a_cos_sim = torch.triu(torch.mm(a, a.t()), diagonal=-1).mean()
+        v_cos_sim = torch.triu(torch.mm(v, v.t()), diagonal=-1).mean()
+        t_cos_sim = torch.triu(torch.mm(v, t.t()), diagonal=-1).mean()
 
         # total_loss = av_loss + at_loss + vt_loss + avt_loss
         # total_loss = av_loss + at_loss + vt_loss
-        total_loss = instance_weight*(a_loss + v_loss + t_loss) + nce_weight*(av_loss + at_loss + vt_loss) + centroid_weight*(avt_loss)
+        # total_loss = instance_weight*(a_loss + v_loss + t_loss) + nce_weight*(av_loss + at_loss + vt_loss) + centroid_weight*(avt_loss)
+
+        total_loss = av_loss + at_loss + vt_loss + avt_loss
 
         metrics = {
-            'a_loss': a_loss,
-            'v_loss': v_loss,
-            't_loss': t_loss,
-            'av_loss': av_loss,
-            'at_loss': at_loss,
-            'vt_loss': vt_loss,
-            'avt_loss': avt_loss,
-            'total_loss': total_loss,
+            'loss_a': a_loss,
+            'loss_v': v_loss,
+            'loss_t': t_loss,
+            'loss_av': av_loss,
+            'loss_at': at_loss,
+            'loss_vt': vt_loss,
+            'loss_avt': avt_loss,
+            'loss': total_loss,
+            'cos_sim_a': a_cos_sim,
+            'cos_sim_v': v_cos_sim,
+            'cos_sim_t': t_cos_sim,
+            'cos_sim_av': av_cos_sim,
+            'cos_sim_at': at_cos_sim,
+            'cos_sim_vt': vt_cos_sim,
         }
         return metrics
 
@@ -412,7 +486,7 @@ class LinearClassifierAVT(torch.nn.Module):
         # self.model_path = "/home/sgurram/Desktop/video_lava/lava/10w32ijn/checkpoints/epoch=10.ckpt"
         self.model = LAVA()
         # self.model.load_state_dict(torch.load(self.model_path), strict=False)
-        # self.model.eval()
+        self.model.eval()
         print(self.model._model_dimension)
 
         self.a_feature_model = self.model._audio_feature_model
@@ -451,14 +525,17 @@ class LinearClassifierAVT(torch.nn.Module):
         return x
     
     def forward(self,  a, v, t):
-        # with torch.no_grad():
-        a = self.encode_audio(a)
-        v = self.encode_video(v)
-        t = self.encode_text(t)
+        with torch.no_grad():
+            a = self.encode_audio(a)
+            v = self.encode_video(v)
+            t = self.encode_text(t)
         # print(any([p.requires_grad for p in [a, v, t]]))
 
         # representation = torch.stack((a,v,t)).squeeze().mean(dim=0)
         # a, v, t = torch.rand(32, 512).cuda(), torch.rand(32, 512).cuda(), torch.rand(32, 512).cuda()
+        a = torch.zeros(32, 512).cuda()
+        v = torch.zeros(32, 512).cuda()
+        # t = torch.zeros(32, 512).cuda()
         representation = torch.cat((a,v,t), dim=-1)
         pred = self.fc1(representation)
         return pred

@@ -16,6 +16,7 @@ import glob
 
 from aai.experimental.sgurram.lava.src.utils import adjust_video_size, nan_filter, pad_spec, get_log_mel_spec
 from aai.experimental.sgurram.lava.src.metrics import cosine_similarity
+from aai.experimental.sgurram.lava.src.encoder import *
 
 torchaudio.set_audio_backend("sox_io")
 os.environ["IMAGEIO_FFMPEG_EXE"] = "/home/sgurram/anaconda3/bin/ffmpeg"
@@ -99,12 +100,13 @@ def get_audio_from_mp4(path):
 
     input_a.close()
 
-    aud = get_log_mel_spec(torch.flatten(torch.from_numpy(aud).mean(dim=1).type(dtype=torch.float32)))
-    aud = pad_spec(aud)
-    aud = nan_filter(aud)
+    aud = torch.from_numpy(aud).permute(1, 0, 2).reshape((2,-1))
+    spec = get_log_mel_spec(aud.mean(dim=0).to(dtype=torch.float32))
+    spec = pad_spec(spec)
+    spec = nan_filter(spec)
 
     #aud shape: [M x T], where M = 128, T = 2048
-    return aud
+    return aud, spec
 
 def get_audio_from_wav(path):
     try:
@@ -114,7 +116,7 @@ def get_audio_from_wav(path):
     spec = torchaudio.transforms.MelSpectrogram()(wave)
     spec = spec.log2().mean(dim=0).squeeze() #avg across channels dimensions
     spec = nan_filter(pad_spec(spec))
-    return spec
+    return wave, spec
 
 def get_audiovisual(path):
     input_a = av.open(path, 'r')
@@ -250,27 +252,109 @@ if __name__ == '__main__':
     for path in glob.glob(f'{dir}/*.mp4'):
         file_paths.append(path)
 
-    path = "/big/kinetics_audio/train/25_riding a bike/0->--JMdI8PKvsc.wav"
+
+    dir = "/big/kinetics_audio/validate"
+    wav_paths = []
+    for path in glob.glob(f'{dir}/*/*.wav'):
+        wav_paths.append(path)
+
+    dir = '/big/afang/kinetics_eval_numpy'
+    text_paths = []
+    for path in glob.glob(f'{dir}/*.npy'):
+        text_paths.append(path)
+
+    wav_path = "/big/kinetics_audio/train/25_riding a bike/0->--JMdI8PKvsc.wav"
+    mp4_path = "/big/davidchan/kinetics/kinetics_train_clipped/-JMdI8PKvsc.mp4"
+    mp4_path = "/big/sgurram/kinetics_downsample/val/CIRUvo_OGv4.mp4"
+    mp4_path2 = "/big/davidchan/kinetics/kinetics_val_clipped/CIRUvo_OGv4.mp4"
+
+    # a1, s1 = get_audio_from_wav(wav_path)  
+
+    a1, s1 = get_audio_from_mp4(file_paths[128])  
+    a2, s2 = get_audio_from_mp4(file_paths[991])
+
+    # v1 = get_video_from_mp4(file_paths[27272]) 
+    # v2 = get_video_from_mp4(file_paths[2221])
+
+
+    # a1, s1 = get_audio_from_wav(wav_paths[3224])  
+    # a2, s2 = get_audio_from_wav(wav_paths[191])
+
+    a1 = a1.mean(dim=0).to(dtype=torch.float32)
+    a2 = a2.mean(dim=0).to(dtype=torch.float32)
+
+    a1 = torchaudio.transforms.MFCC(n_mfcc=128)(a1)[:, :2048]
+    a2 = torchaudio.transforms.MFCC(n_mfcc=128)(a2)[:, :2048]
+
+
+    model_path = "/home/sgurram/Desktop/video_lava/lava/389sgbrj/checkpoints/epoch=99.ckpt"
+    model = LAVA()
+    # model.load_state_dict(torch.load(model_path), strict=False)
+    af = model._audio_feature_model
+    vf = model._video_feature_model
+    model.eval()
+
+    s1 = af(a1.unsqueeze(0)).squeeze().detach()
+    s2 = af(a2.unsqueeze(0)).squeeze().detach()
+
+    # s1 = vf(v1.unsqueeze(0).to(dtype=torch.float32)).squeeze().detach()
+    # s2 = vf(v2.unsqueeze(0).to(dtype=torch.float32)).squeeze().detach()
+
+    # path = file_paths
+
+    # s1 = torch.from_numpy(np.load(text_paths[120]))
+    # s2 = torch.from_numpy(np.load(text_paths[11116]))
+
+    # _, s1 = get_audio_from_mp4(path[120])
+    # _, s2 = get_audio_from_mp4(path[11116])
+
+    # s1 = torch.flatten(get_video_from_mp4(path[120])).to(dtype=torch.float32).unsqueeze(0)
+    # s2 = torch.flatten(get_video_from_mp4(path[1116])).to(dtype=torch.float32).unsqueeze(0)
+
+    print(a1.shape)
+    print(a2.shape)
+    print(s1.shape)
+    print(s2.shape)
+    f = plt.figure()
+    f.add_subplot(2, 1, 1)
+    plt.imshow(s1)
+    f.add_subplot(2, 1, 2)
+    plt.imshow(s2)
+    plt.savefig('/home/sgurram/Desktop/audio_comparison.png')
+
+    # print(a1.mean())
+    # print(torch.min(a1))
+    # print(torch.max(a1))
+
+    # print(a2.mean())
+    # print(torch.min(a2))
+    # print(torch.max(a2))
+
+
+    print(torch.nn.CosineSimilarity()(a1, a2).mean())
+    print(torch.nn.CosineSimilarity()(s1, s2).mean())
+    # print(torch.nn.CosineSimilarity()(s1.t(), s2.t()).mean())
+
     # print(get_audio_from_wav(path))
 
-    embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder/4")
-    a, v, t = get_lava_features(mp4_path=file_paths[4],
-                            wav_path=path,
-                            guse_model=embed)
-    print(a.shape)
-    print(v.shape)
-    print(t.shape)
+    # embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder/4")
+    # a, v, t = get_lava_features(mp4_path=file_paths[4],
+    #                         wav_path=path,
+    #                         guse_model=embed)
+    # print(a.shape)
+    # print(v.shape)
+    # print(t.shape)
 
     positive = ["this is my pet, a friendly little dog", "this is my pet, a friendly little puppy"]
     negative = ["this is my pet, a friendly little dog", "launch the rocket to reach low-earth orbit and begin re-entry into the atmosphere"]
 
-    pos = embed(positive)
-    neg = embed(negative)
+    # pos = embed(positive)
+    # neg = embed(negative)
 
-    p1, p2 = pos
-    n1, n2 = neg
-    print(cosine_similarity(p1, p2))
-    print(cosine_similarity(n1, n2))
+    # p1, p2 = pos
+    # n1, n2 = neg
+    # print(cosine_similarity(p1, p2))
+    # print(cosine_similarity(n1, n2))
 
     '''Evaluate Audiovisual Feature Extraction'''
     # for path in tqdm(file_paths[:5]):
