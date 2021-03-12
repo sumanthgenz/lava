@@ -39,8 +39,8 @@ def instance_loss(x):
     loss = sim_matrix.mean()
     return loss
 
-def nce_loss(x, y):
-    sim_matrix = torch.mm(x, y.t())
+def nce_loss(x, y, tmp=1):
+    sim_matrix = torch.mm(x, y.t()) / tmp
     pos_pairs = torch.arange(x.size(0)).to(sim_matrix.device)
     loss = torch.nn.functional.cross_entropy(sim_matrix, pos_pairs)
     return loss
@@ -86,7 +86,10 @@ def centroid_contrastive_loss(x, y, z):
 
 def centroid_nce_loss(x, y, z):
     centroid = (x + y + z)/3
-    nce_losses = nce_loss(x, centroid) + nce_loss(y, centroid) + nce_loss(z, centroid)
+    nce_losses = 0
+    nce_losses += 0.5*(nce_loss(x, centroid) + nce_loss(centroid, x)) 
+    nce_losses += 0.5*(nce_loss(y, centroid) + nce_loss(centroid, y))
+    nce_losses += 0.5*(nce_loss(z, centroid) + nce_loss(centroid, z)) 
     return nce_losses
 
 # lalign and lunif from https://arxiv.org/pdf/2005.10242.pdf

@@ -4,6 +4,7 @@ import torchvision
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
+# from pytorch_lightning.plugins.training_type.rpc_sequential import RPCSequentialPlugin
 
 
 import warnings
@@ -58,7 +59,7 @@ flags.DEFINE_integer('log_freq',
                     help='number of batches in between logging gradients',)
 
 def train_lava():
-        model = LAVALightning(logger=wandb_logger)
+
 
 
     # FLAGS for instaniating trainer
@@ -78,36 +79,73 @@ def train_lava():
     #         log=FLAGS.log, 
     #         log_freq=FLAGS.log_freq)
 
-        wandb_logger.watch(model, 
-                log='gradients', 
-                log_freq=10)
+ 
+        lr_monitor_callback = pl.callbacks.LearningRateMonitor()
+
+        hparams = {'gpus':[1], 
+                'max_epochs': 100, 
+                'auto_lr_find': False,
+                'learning_rate': 3e-4,
+                'auto_scale_batch_size': None,
+                'batch_size': 12,
+                'accumulate_grad_batches': 8,
+                'model_dimension': 1024,
+                'feature_dimension': 512,
+                'seq_len': 256,
+                'loss_functions': ['modal_pairwise_nce', 'triplet_centroid_nce'],
+                'num_transformer_heads': 8,
+                'num_transformer_layers': 8,
+                'dropout': 0.1,
+                'overfit_batches': 0,
+                'amp_backend': 'native',
+                'amp_level': 'O2',
+                'precision': 32,
+                'optimizer': 'adamW',
+                'scheduler': 'cosine',
+                'warmup': None,
+                'profiler': True,
+                'distributed_backend': 'ddp'}
+
+        model = LAVALightning(dropout=hparams['dropout'],
+                        model_dimension=hparams['model_dimension'], 
+                        feat_dimension=hparams['feature_dimension'],
+                        seqlen=hparams['seq_len'],
+                        batch_size=hparams['batch_size'], 
+                        num_heads=hparams['num_transformer_heads'], 
+                        num_layers=hparams['num_transformer_layers'],
+                        learning_rate=hparams['learning_rate'],
+                        optimizer=hparams['optimizer'],
+                        scheduler=hparams['scheduler'],
+                        warmup_mode=hparams['warmup'])
 
         # wandb_logger = None
 
+        wandb_logger.log_hyperparams(hparams)
 
-        hyperparams = {'gpus':[1], 
-                'max_epochs': 25, 
-                'batch_size': model.encoder._batch_size,
-                'accumulate_grad_batches': 8,
-                'learning_rate': model.encoder._learning_rate,
-                'feature_dimension': model.encoder._feature_dimension,
-                'model_dimension': model.encoder._learning_rate,
-                'seq_len': model.encoder._seqlen,
-                'num_transformer_layers': model.encoder._num_layers,
-                'num_transformer_layers': model.encoder._num_heads,
-                'optimizer': 'Adam',
-                'scheduler': 'n/a',}
-
-        wandb_logger.log_hyperparams(hyperparams)
+        wandb_logger.watch(model, 
+        log='gradients', 
+        log_freq=10)
 
         trainer = pl.Trainer(
                 default_root_dir='/home/sgurram/Desktop/video_lava', 
-                gpus=[1], 
-                max_epochs=100, 
-                accumulate_grad_batches=1,
-                overfit_batches=10,
+                gpus=hparams['gpus'], 
+                max_epochs=hparams['max_epochs'],
+                auto_scale_batch_size=hparams['auto_scale_batch_size'],
+                auto_lr_find=hparams['auto_lr_find'],
+                accumulate_grad_batches=hparams['accumulate_grad_batches'],
+                overfit_batches=hparams['overfit_batches'],
                 logger=wandb_logger,
-                profiler=True) 
+                profiler=hparams['profiler'],
+                amp_backend=hparams['amp_backend'],
+                amp_level=hparams['amp_level'],
+                # precision=hparams['precision'],
+                # distributed_backend=hparams['distributed_backend'],
+                # limit_train_batches=0.01,
+                # limit_val_batches=0.01,
+                # callbacks=[lr_monitor_callback],
+                ) 
+
+        trainer.tune(model)
         
         trainer.fit(model)
 
@@ -116,10 +154,11 @@ def train_classifier():
 
         model = EvalLightning(logger=wandb_logger)
 
-        hyperparams = {'gpus':[0], 
+        hparams = {'gpus':[1], 
                 'max_epochs': 25, 
                 'batch_size': model.classifier.batch_size,
                 'accumulate_grad_batches': 8,
+                'overfit_batches': 0,
                 'learning_rate': model.classifier.learning_rate,
                 'feature_dimension': model.classifier.feature_dimension,
                 'model_dimension': model.classifier.model_dimension,
@@ -127,24 +166,31 @@ def train_classifier():
                 'type_modalities': 'avt', 
                  'optimizer': 'Adam',
                 'scheduler': 'n/a',}
-        
 
+        trainer = pl.Trainer(
+                default_root_dir='/home/sgurram/Desktop/video_lava_classifer', 
+                gpus=hparams['gpus'], 
+                max_epochs=hparams['max_epochs'],
+                accumulate_grad_batches=hparams['accumulate_grad_batches'],
+                overfit_batches=hparams['overfit_batches'],
+                logger=wandb_logger,
+                profiler=True) 
+        
         wandb_logger.watch(model, 
                 log='gradients', 
                 log_freq=10)
 
-        wandb_logger.log_hyperparams(hyperparams)
+        wandb_logger.log_hyperparams(hparams)
 
 
         trainer = pl.Trainer(
                 default_root_dir='/home/sgurram/Desktop/video_lava_classifier', 
-                gpus=[1], 
-                max_epochs=25, 
-                accumulate_grad_batches=8,
+                gpus=hparams['gpus'], 
+                max_epochs=hparams['max_epochs'],
+                accumulate_grad_batches=hparams['accumulate_grad_batches'],
+                overfit_batches=hparams['overfit_batches'],
                 logger=wandb_logger,
-                overfit_batches=100,
                 profiler=True) 
-        
         trainer.fit(model)
 
 def train_supervised_video_encoder():
@@ -190,4 +236,3 @@ if __name__ == '__main__':
 #     train_classifier()
     train_lava()
 #     train_supervised_video_encoder()
-

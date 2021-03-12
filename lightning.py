@@ -5,6 +5,7 @@ import torch.nn as nn
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 import pytorch_lightning as pl
 from efficientnet_pytorch import EfficientNet
+import pytorch_warmup as warmup
 
 import numpy as np
 import pandas as pd 
@@ -25,12 +26,54 @@ warnings.filterwarnings("ignore")
 
 class LAVALightning(pl.LightningModule):
 
-    def __init__(self,logger):
+    def __init__(self,
+        model_dimension=1024, 
+        feat_dimension=512,
+        seqlen=256,
+        batch_size=12, 
+        num_heads=8, 
+        num_layers=8,
+        learning_rate=3e-4,
+        optimizer = "adamW",
+        scheduler = "cosine",
+        max_lr = 3e-4,
+        min_lr = 1e-7,
+        warmup_mode = None,     
+        warmup_steps = 4000,
+        cooldown_steps = 2000,
+        warm_gamma = 1.147,
+        cool_gamma = 0.9977,
+        dropout=0.1,):
+
         super().__init__()
 
-        self.encoder = LAVA()
-        # self.logger = logger
+        self.model_dimension = model_dimension
+        self.feature_dimension = feat_dimension
+        self.seqlen = seqlen
+        self.batch_size = batch_size
+        self.num_heads = num_heads
+        self.num_layers = num_layers
+        self.dropout = dropout
+        self.learning_rate = learning_rate
+        self.max_lr = 3e-4,
+        self.min_lr = 1e-7,
+        self.optimizer = optimizer,
+        self.scheduler = scheduler,
+        self.warmup_mode = warmup_mode,     
+        self.warmup_steps = warmup_steps,
+        self.cooldown_steps = cooldown_steps,
+        self.warm_gamma = warm_gamma,
+        self.cool_gamma = cool_gamma,
 
+        self.encoder = LAVA(dropout=self.dropout,
+                        model_dimension=self.model_dimension, 
+                        feat_dimension=self.feature_dimension,
+                        seqlen=self.seqlen,
+                        batch_size=self.batch_size, 
+                        learning_rate=self.learning_rate,
+                        num_heads=self.num_heads, 
+                        num_layers=self.num_layers,)
+  
     def training_step(self, batch, batch_idx):
         audio, video, text = batch
         audio_encoded, video_encoded, text_encoded = self.encoder(audio, video, text)
@@ -53,14 +96,6 @@ class LAVALightning(pl.LightningModule):
 
         return {'val_total_loss': metrics['loss']}
 
-        # return {'val_total_loss': metrics['total_loss'],
-        #         'val_a_loss': metrics['a_loss'],
-        #         'val_v_loss': metrics['v_loss'],
-        #         'val_t_loss': metrics['t_loss'],
-        #         'val_av_loss': metrics['av_loss'],
-        #         'val_at_loss': metrics['at_loss'],
-        #         'val_vt_loss': metrics['vt_loss'],
-        #         'val_avt_loss': metrics['avt_loss'],}
 
     def test_step(self, batch, batch_idx):
         audio, video, text = batch
@@ -71,54 +106,16 @@ class LAVALightning(pl.LightningModule):
             self.log('val/{}'.format(k), metrics[k], prog_bar=False)
             
         return {'test_total_loss': metrics['total_loss'],}
-
-        # return {'test_total_loss': metrics['total_loss'],
-        #         'test_avt_loss': metrics['avt_loss'],
-        #         'test_av_loss': metrics['av_loss'],
-        #         'test_at_loss': metrics['at_loss'],
-        #         'test_vt_loss': metrics['vt_loss'],}
                 
     
     def training_epoch_end(self, outputs):
-        # avg_a_loss = torch.stack([m['logs']['a_loss'] for m in outputs]).mean()
-        # avg_v_loss = torch.stack([m['logs']['v_loss'] for m in outputs]).mean()
-        # avg_t_loss = torch.stack([m['logs']['t_loss'] for m in outputs]).mean()
-        # avg_av_loss = torch.stack([m['logs']['av_loss'] for m in outputs]).mean()
-        # avg_at_loss = torch.stack([m['logs']['at_loss'] for m in outputs]).mean()
-        # avg_vt_loss = torch.stack([m['logs']['vt_loss'] for m in outputs]).mean()
-        # avg_avt_loss = torch.stack([m['logs']['avt_loss'] for m in outputs]).mean()
         avg_total_loss = torch.stack([m['logs']['loss'] for m in outputs]).mean()
-
-        # logs = {'train_total_loss': avg_total_loss,
-        #         'train_a_loss': avg_a_loss,
-        #         'train_v_loss': avg_v_loss,
-        #         'train_t_loss': avg_t_loss,
-        #         'train_av_loss': avg_av_loss,
-        #         'train_at_loss': avg_at_loss,
-        #         'train_vt_loss': avg_vt_loss,
-        #         'train_avt_loss': avg_avt_loss,}
 
         self.log('train_avg_loss', avg_total_loss)
 
     def validation_epoch_end(self, outputs):
-        # avg_a_loss = torch.stack([m['val_a_loss'] for m in outputs]).mean()
-        # avg_v_loss = torch.stack([m['val_v_loss'] for m in outputs]).mean()
-        # avg_t_loss = torch.stack([m['val_t_loss'] for m in outputs]).mean()
-        # avg_av_loss = torch.stack([m['val_av_loss'] for m in outputs]).mean()
-        # avg_at_loss = torch.stack([m['val_at_loss'] for m in outputs]).mean()
-        # avg_vt_loss = torch.stack([m['val_vt_loss'] for m in outputs]).mean()
-        # avg_avt_loss = torch.stack([m['val_avt_loss'] for m in outputs]).mean()
         avg_total_loss = torch.stack([m['val_total_loss'] for m in outputs]).mean()
 
-        # logs = {'val_total_loss': avg_total_loss,
-        #         'val_a_loss': avg_a_loss,
-        #         'val_v_loss': avg_v_loss,
-        #         'val_t_loss': avg_t_loss,
-        #         'val_av_loss': avg_av_loss,
-        #         'val_at_loss': avg_at_loss,
-        #         'val_vt_loss': avg_vt_loss,
-        #         'val_avt_loss': avg_avt_loss,}
-        
         self.log('val_avg_loss', avg_total_loss)
 
     def train_dataloader(self):
@@ -138,8 +135,41 @@ class LAVALightning(pl.LightningModule):
                                   num_workers=8)
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.encoder._learning_rate)
-        return optimizer
+        if self.optimizer=="adamW":
+            optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        else: 
+            optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+
+        if self.scheduler=="cosine":
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1000, eta_min=self.min_lr)
+            # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=4, eta_min=self.min_lr)
+        elif self.scheduler=="multistep":
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[50, 75], gamma=0.1)
+        else:
+            return optimizer
+        return [optimizer], [scheduler]
+        # return optimizer
+
+
+    # def optimizer_step(self, current_epoch, batch_nb, optimizer, optimizer_idx, second_order_closure=None, on_tpu=False, using_native_amp=False, using_lbfgs=False):        
+    #     if self.trainer.global_step < self.warmup_steps:
+    #         if self.warmup_mode == "linear":
+    #             lr_scale = self.trainer.global_step * (self.max_lr / self.warmup_steps)
+    #             lr = self.min_lr + lr_scale
+    #         elif self.warmup_mode == "exp":
+    #             lr_scale = self.warm_gamma ** (self.trainer.global_step)
+    #             lr = lr_scale * self.min_lr
+    #     elif self.warmup_steps < self.trainer.global_step < self.cooldown_steps:
+    #             lr_scale = self.cool_gamma ** (self.trainer.global_step-self.warmup_steps)
+    #             lr = lr_scale * self.max_lr
+    #     else:
+    #         lr = self.learning_rate
+
+    #     for pg in optimizer.param_groups:
+    #         pg['lr'] = lr  
+
+    #     optimizer.step()
+    #     optimizer.zero_grad()
 
 
 class EvalLightning(pl.LightningModule):
@@ -157,7 +187,6 @@ class EvalLightning(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         a, v, t, label = batch
         logits = self.classifier(a, v, t)
-        # print(self.classifer.training())
         
         loss = self.loss(logits, label)
         top_1_accuracy = compute_accuracy(logits, label, top_k=1)
@@ -210,21 +239,12 @@ class EvalLightning(pl.LightningModule):
 
     def training_epoch_end(self, outputs):
         avg_loss = torch.stack([m['logs']['loss'] for m in outputs]).mean()
-        # avg_top1 = torch.stack([m['logs']['train_top_1'] for m in outputs]).mean()
-        # avg_top5 = torch.stack([m['logs']['train_top_5'] for m in outputs]).mean()
-
-        # logs = {
-        # 'train_loss': avg_loss,
-        # 'train_top_1': avg_top1,
-        # 'train_top_5': avg_top5}
 
         self.log('train_avg_loss', avg_loss)
 
 
     def validation_epoch_end(self, outputs):
         avg_loss = torch.stack([m['val_loss'] for m in outputs]).mean()
-        # avg_top1 = torch.stack([m['val_top_1'] for m in outputs]).mean()
-        # avg_top5 = torch.stack([m['val_top_5'] for m in outputs]).mean()
 
         self.log('val_avg_loss', avg_loss)
 

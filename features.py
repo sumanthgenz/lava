@@ -62,12 +62,10 @@ class LAVAFeatures():
             wav_path: (str) (optional) path to a wav file for the audio stream
             save: (bool) whether or not to save the extracted features
             save_dir: (str) path to the file to be saved (include train, val)
-
         Return:
             If SAVE is false, will return audio, video and text features (if any) produced by pre-trained LAVA.
             Otherwise, will save features to numpy files.
             Note: if a given input only has video, no corresponding text or audio numpy files will be available for that input.
-
         """
 
         audio, video, text = None, None, None
@@ -218,7 +216,6 @@ class LAVAFeatures():
                                                     T = timesteps, H = height, W = width, C = channels
             target_size: (int) output dimension for H and W
             seq_len: (int) output dimension for T
-
         Return:
             video_frames: (np.array) output video with desired output shape
         Subsample videoframes and clip to seq_len frames (pad if T < seq_len). Crop frames from top-right corner to target_size (pad if needed).
@@ -262,26 +259,37 @@ class LAVAFeatures():
 
 if __name__ == "__main__":
 
-    lf = LAVAFeatures()
+    dir = "/big/davidchan/kinetics/kinetics_val_clipped"
+    file_paths = []
+    for path in glob.glob(f'{dir}/*.mp4'):
+        file_paths.append(path)
 
-    wav_path = "/big/kinetics_audio/train/25_riding a bike/3->-merlXJp4m4c.wav"
-    mp4_path = "/big/sgurram/kinetics_downsample/val/CIRUvo_OGv4.mp4"
-    npy_path = "/big/sgurram/kinetics_numpy/val/video/CIRUvo_OGv4.npy"
+    model_path = "/home/sgurram/Desktop/video_lava/lava/3l5t28v4/checkpoints/epoch=4.ckpt"
+    # model_path = "/home/sgurram/Desktop/video_lava/lava/r29koav/checkpoints/epoch=0.ckpt"
 
-    path1 = "/big/sgurram/kinetics_downsample/val/CIRUvo_OGv4.mp4"
+    lf = LAVAFeatures(lava_model_path=model_path)
+    
+    idx1 = 8282
+    idx2 = 56
+
+    # wav_path = "/big/kinetics_audio/train/25_riding a bike/3->-merlXJp4m4c.wav"
+    # mp4_path = "/big/sgurram/kinetics_downsample/val/CIRUvo_OGv4.mp4"
+    # npy_path = "/big/sgurram/kinetics_numpy/val/video/CIRUvo_OGv4.npy"
+
+    # path1 = "/big/sgurram/kinetics_downsample/val/CIRUvo_OGv4.mp4"
     # path2 = "/big/sgurram/kinetics_downsample/train/-JMdI8PKvsc.mp4"	             
     # path1 = "/big/sgurram/kinetics_downsample/train/L3lKNeY5mIs.mp4"	   
     # path2 = "/big/sgurram/kinetics_downsample/val/Zp44Wj7soCE.mp4"	 
-    path2 = "/big/sgurram/kinetics_downsample/val/oTCio7AcabE.mp4"
+    # path2 = "/big/sgurram/kinetics_downsample/val/oTCio7AcabE.mp4"
 
 
     # for _ in tqdm(range(25)):
     #     a1, v1, t1 = lf.get_lava_features(mp4_path=mp4_path, text_input="this is a video of a dog")
 
-    a1, v1, t1 = lf.get_lava_features(mp4_path=path1, text_input="this is a video of a dog")
+    a1, v1, t1 = lf.get_lava_features(mp4_path=file_paths[idx1], text_input="this is a video")
     a1, v1, t1 = torch.from_numpy(a1), torch.from_numpy(v1), torch.from_numpy(t1)
 
-    a2, v2, t2 = lf.get_lava_features(mp4_path=path2, text_input="this is a video of something")
+    a2, v2, t2 = lf.get_lava_features(mp4_path=file_paths[idx2], text_input="this is a video")
     a2, v2, t2 = torch.from_numpy(a2), torch.from_numpy(v2), torch.from_numpy(t2)
 
     sample_1 = torch.stack((a1, v1, t1))
@@ -293,20 +301,21 @@ if __name__ == "__main__":
 
     print("Sample 1 Pairwise Modal Comparisons")
     print(cosine_similarity(a1, v1))
-    print(cosine_similarity(a1, t1))
-    print(cosine_similarity(v1, t1))
+    # print(cosine_similarity(a1, t1))
+    # print(cosine_similarity(v1, t1))
     print("Sample 2 Pairwise Modal Comparisons")
     print(cosine_similarity(a2, v2))
-    print(cosine_similarity(a2, t2))
-    print(cosine_similarity(v2, t2))
+    # print(cosine_similarity(a2, t2))
+    # print(cosine_similarity(v2, t2))
     print("Sample 1 and 2 Different Modal Comparisons")
     print(cosine_similarity(a1, v2))
-    print(cosine_similarity(v1, t2))
-    print(cosine_similarity(t1, a2))
+    print(cosine_similarity(a2, v1))
+    # print(cosine_similarity(v1, t2))
+    # print(cosine_similarity(t1, a2))
     print("Sample 1 and 2 Same Modal Comparisons")
     print(cosine_similarity(a1, a2))
     print(cosine_similarity(v1, v2))
-    print(cosine_similarity(t1, t2))
+    # print(cosine_similarity(t1, t2))
 
     # print(sample_1.shape)
     # print(sample_2.shape)
