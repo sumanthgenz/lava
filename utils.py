@@ -3,11 +3,14 @@ import av
 import torch
 import torchaudio
 import torchvision
+import torchtext
 import numpy as np
 from typing import Tuple, Optional
 import warnings
 import pickle
 import glob
+from torchtext.data.functional import generate_sp_model, load_sp_model, sentencepiece_numericalizer
+from aai.experimental.sgurram.lava.src.references import mp4_root_dir, pickle_root_dir
 
 torchaudio.set_audio_backend("sox_io") 
 warnings.filterwarnings("ignore")
@@ -32,7 +35,6 @@ def adjust_video_size(video_frames, target_size=128, seq_len=16):
                                                 T = timesteps, H = height, W = width, C = channels 
         target_size: (int) output dimension for H and W
         seq_len: (int) output dimension for T
-
     Return:
         video_frames: (np.array) output video with desired output shape
     Subsample videoframes and clip to seq_len frames (pad if T < seq_len). Crop frames from top-right corner to target_size (pad if needed).
@@ -77,7 +79,7 @@ def get_src_conditional_mask(max_sequence_length):
     mask = (torch.triu(torch.ones(max_sequence_length, max_sequence_length)) == 1).transpose(0, 1)
     return mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
 
-def get_mp4_paths(root='/big/davidchan/kinetics'):
+def get_mp4_paths(root=mp4_root_dir):
     """
     Args:
         root: path to root of the Kinetics mp4 files
@@ -99,15 +101,13 @@ def get_mp4_paths(root='/big/davidchan/kinetics'):
 def create_kinetics_labels():
     classes = []
 
-    train = pickle.load(open("/home/sgurram/Desktop/kinetics/kinetics_train.pickle", "rb"))
-    val = pickle.load(open("/home/sgurram/Desktop/kinetics/kinetics_validate.pickle", "rb"))
-    # test = pickle.load(open("/home/sgurram/Desktop/kinetics/kinetics_test.pickle", "rb"))
+    train = pickle.load(open("{}/kinetics_train.pickle".format(picke_root_dir), "rb"))
+    val = pickle.load(open("{}/kinetics_validate.pickle".format(picke_root_dir), "rb"))
+    # test = pickle.load(open("{}/kinetics_test.pickle".format(picke_root_dir), "rb"))
 
     for key in train:
         if train[key][1] not in classes:
             classes.append(train[key][1])
-
-    print(len(classes))
 
     for key in train:
         class_name = train[key][1]
@@ -117,9 +117,9 @@ def create_kinetics_labels():
         class_name = val[key][1]
         val[key] = [class_name, classes.index(class_name)]
 
-    pickle.dump(train, open("/home/sgurram/Desktop/kinetics/train.pickle", "wb"))
-    pickle.dump(val, open("/home/sgurram/Desktop/kinetics/val.pickle", "wb"))
-    pickle.dump(classes, open("/home/sgurram/Desktop/kinetics/kinetics700_classes.pickle", "wb"))
+    pickle.dump(train, open("{}/kinetics_train.pickle".format(picke_root_dir), "wb"))
+    pickle.dump(val, open("{}/kinetics_val.pickle".format(picke_root_dir), "wb"))
+    pickle.dump(classes, open("{}/kinetics_700_classes.pickle".format(picke_root_dir), "wb"))
 
     return train, val
 
@@ -128,8 +128,8 @@ def create_kinetics_labels():
 
 def get_kinetics_labels(prefix="train"):
 
-    data = pickle.load(open("/home/sgurram/Desktop/kinetics/{}.pickle".format(prefix), "rb"))
-    root = '/big/davidchan/kinetics/kinetics_{}_clipped/*.mp4'.format(prefix)
+    data = pickle.load(open("{}/{}.pickle".format(pickle_root_dir, prefix), "rb"))
+    root = '{}/kinetics_{}_clipped/*.mp4'.format(mp4_root_dir, prefix)
 
     present = 0
     total = 0
@@ -206,3 +206,17 @@ def position_embed_3d(inputs):
     # Concatenate the position embeddings to the inputs
     return torch.cat(
         [inputs, position_embedding.unsqueeze(0).expand(batch_size, -1, -1, -1, -1).type_as(inputs)], dim=-1)
+
+def generate_tokenizer(filename, vocab_size):
+    generate_sp_model(filename, vocab_size, model_type='bpe', model_prefix='lava_sp')
+
+def tokenize_text(sp_model_path, text):
+    sp_model = load_sp_model(sp_model_path)
+    sp_id_generator = sentencepiece_numericalizer(sp_model)
+    return list(sp_id_generator(text))
+
+
+if __name__ == '__main__':
+    # generate_tokenizer('sample.txt', int(10000))
+    text = ["Vladmir Putin is the current leader of Russia", "Google Universal Sentence Enocder was merely a phase!"]
+    print(tokenize_text(sp_model_path='lava_sp.model', text=text))
