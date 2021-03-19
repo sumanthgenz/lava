@@ -18,11 +18,13 @@ import glob
 from aai.experimental.sgurram.lava.src.encoder import LAVA
 from aai.experimental.sgurram.lava.src.utils import get_src_conditional_mask, position_embed, position_embed_3d
 from aai.experimental.sgurram.lava.src.metrics import cosine_similarity
+from aai.experimental.sgurram.lava.src.references import lava_weights_path
+
 
 class LAVAFeatures():
 
     def __init__(self,
-                 lava_model_path="/home/sgurram/Desktop/video_lava/lava/2hq4bjww/checkpoints/epoch=15.ckpt",
+                 lava_model_path=lava_weights_path,
                  guse_model_path="https://tfhub.dev/google/universal-sentence-encoder/4"):
 
         self.guse_model_path = guse_model_path
@@ -255,89 +257,3 @@ class LAVAFeatures():
                 os.makedirs(dir)
             path = "{}/{}".format(dir, filename)
             np.save(path, features.detach().numpy())
-
-
-if __name__ == "__main__":
-
-    dir = "/big/davidchan/kinetics/kinetics_val_clipped"
-    file_paths = []
-    for path in glob.glob(f'{dir}/*.mp4'):
-        file_paths.append(path)
-
-    model_path = "/home/sgurram/Desktop/video_lava/lava/3l5t28v4/checkpoints/epoch=4.ckpt"
-    # model_path = "/home/sgurram/Desktop/video_lava/lava/r29koav/checkpoints/epoch=0.ckpt"
-
-    lf = LAVAFeatures(lava_model_path=model_path)
-    
-    idx1 = 8282
-    idx2 = 56
-
-    # wav_path = "/big/kinetics_audio/train/25_riding a bike/3->-merlXJp4m4c.wav"
-    # mp4_path = "/big/sgurram/kinetics_downsample/val/CIRUvo_OGv4.mp4"
-    # npy_path = "/big/sgurram/kinetics_numpy/val/video/CIRUvo_OGv4.npy"
-
-    # path1 = "/big/sgurram/kinetics_downsample/val/CIRUvo_OGv4.mp4"
-    # path2 = "/big/sgurram/kinetics_downsample/train/-JMdI8PKvsc.mp4"	             
-    # path1 = "/big/sgurram/kinetics_downsample/train/L3lKNeY5mIs.mp4"	   
-    # path2 = "/big/sgurram/kinetics_downsample/val/Zp44Wj7soCE.mp4"	 
-    # path2 = "/big/sgurram/kinetics_downsample/val/oTCio7AcabE.mp4"
-
-
-    # for _ in tqdm(range(25)):
-    #     a1, v1, t1 = lf.get_lava_features(mp4_path=mp4_path, text_input="this is a video of a dog")
-
-    a1, v1, t1 = lf.get_lava_features(mp4_path=file_paths[idx1], text_input="this is a video")
-    a1, v1, t1 = torch.from_numpy(a1), torch.from_numpy(v1), torch.from_numpy(t1)
-
-    a2, v2, t2 = lf.get_lava_features(mp4_path=file_paths[idx2], text_input="this is a video")
-    a2, v2, t2 = torch.from_numpy(a2), torch.from_numpy(v2), torch.from_numpy(t2)
-
-    sample_1 = torch.stack((a1, v1, t1))
-    sample_2 = torch.stack((a2, v2, t2))
-
-    # print(a1.shape)
-    # print(v1.shape)
-    # print(t1.shape)
-
-    print("Sample 1 Pairwise Modal Comparisons")
-    print(cosine_similarity(a1, v1))
-    # print(cosine_similarity(a1, t1))
-    # print(cosine_similarity(v1, t1))
-    print("Sample 2 Pairwise Modal Comparisons")
-    print(cosine_similarity(a2, v2))
-    # print(cosine_similarity(a2, t2))
-    # print(cosine_similarity(v2, t2))
-    print("Sample 1 and 2 Different Modal Comparisons")
-    print(cosine_similarity(a1, v2))
-    print(cosine_similarity(a2, v1))
-    # print(cosine_similarity(v1, t2))
-    # print(cosine_similarity(t1, a2))
-    print("Sample 1 and 2 Same Modal Comparisons")
-    print(cosine_similarity(a1, a2))
-    print(cosine_similarity(v1, v2))
-    # print(cosine_similarity(t1, t2))
-
-    # print(sample_1.shape)
-    # print(sample_2.shape)
-    # print(torch.mm(sample_1, sample_1.t()))
-    # print(torch.mm(sample_2, sample_2.t()))
-    # print(torch.mm(sample_1, sample_2.t()))
-
-    # print(v1)
-    # print(v2)
-
-    # v_features = torch.from_numpy(np.load(npy_path)).to(dtype=torch.float)
-
-    # v = lf._video_feature_model(torch.stack((v_features, v_features)))
-    # print(v.shape)
-
-    # x = torch.arange(64).reshape((2, 2, 4, 4))
-    # print(x)
-    # print(x.reshape((-1, 4, 4)))
-    # print(x.reshape((-1, 2, 4, 4)))
-
-    # x = torch.rand((2, 16, 4, 4, 2))
-    # print(position_embed_3d(x).shape)
-
-    # y = torch.rand((2, 128, 2048))
-    # print(position_embed(y).shape)
