@@ -17,9 +17,9 @@ import glob
 from aai.experimental.sgurram.lava.src.utils import adjust_video_size, nan_filter, pad_spec, get_log_mel_spec
 from aai.experimental.sgurram.lava.src.metrics import cosine_similarity
 from aai.experimental.sgurram.lava.src.encoder import *
+from aai.experimental.sgurram.lava.src.references import mp4_root_dir, downsample_root_dir, npy_root_dir, text_root_dir
 
 torchaudio.set_audio_backend("sox_io")
-os.environ["IMAGEIO_FFMPEG_EXE"] = "/home/sgurram/anaconda3/bin/ffmpeg"
 warnings.filterwarnings("ignore")
 
 def get_lava_features(save_dir=None,
@@ -168,8 +168,8 @@ def numpy_processing(path):
 
     datatype = path.split('/')[-2]
     filename = path.split('{}/'.format(datatype))[-1][:-4]
-    a_filename = '/big/sgurram/kinetics_numpy/{}/audio/{}.npy'.format(datatype, filename)
-    v_filename = '/big/sgurram/kinetics_numpy/{}/video/{}.npy'.format(datatype, filename)
+    a_filename = '{}/{}/audio/{}.npy'.format(npy_root_dir, datatype, filename)
+    v_filename = '{}/{}/video/{}.npy'.format(npy_root_dir, datatype, filename)
 
     np.save(a_filename, a)
     np.save(v_filename, v)
@@ -185,14 +185,13 @@ def save_npy_files(prefix):
         a_paths: (list -> str) paths to audio feature npy files
         v_paths: (list -> str) paths to video feature npy files
         t_paths: (list -> str) paths to text feature npy files
-
     Fetch paths to audio, video, text feature files for a given sample,
     if all 3 feature paths exist.
     """
 
     files = []
     prefix = 'val' if prefix=='val' else 'train'
-    root = '/big/sgurram/kinetics_downsample/{}/*.mp4'.format(prefix)
+    root = '{}/{}/*.mp4'.format(downsample_root_dir, prefix)
 
     for path in glob.glob(root):
         files.append(path)
@@ -201,7 +200,7 @@ def save_npy_files(prefix):
     with multiprocessing.Pool(cores) as p:
         list(tqdm(p.imap_unordered(numpy_process, files), total=len(files)))
 
-def get_npy_paths(prefix, view_progress=False):
+def get_npy_paths(prefix, view_progress=True):
     """
     Args:
         prefix: (str) specifies type of data [train, val, test]
@@ -210,7 +209,6 @@ def get_npy_paths(prefix, view_progress=False):
         a_paths: (list -> str) paths to audio feature npy files
         v_paths: (list -> str) paths to video feature npy files
         t_paths: (list -> str) paths to text feature npy files
-
     Fetch paths to audio, video, text feature files for a given sample,
     if all 3 feature paths exist.
     """
@@ -218,13 +216,13 @@ def get_npy_paths(prefix, view_progress=False):
     count = 0
 
 
-    root = '/big/davidchan/kinetics/kinetics_{}_clipped/*.mp4'.format(prefix)
+    root = '{}/kinetics_{}_clipped/*.mp4'.format(mp4_root_dir, prefix)
 
-    a_root = '/big/sgurram/kinetics_numpy/{}/audio/'.format(prefix)
-    v_root = '/big/sgurram/kinetics_numpy/{}/video/'.format(prefix)
+    a_root = '{}/{}/audio/'.format(npy_root_dir, prefix)
+    v_root = '{}/{}/video/'.format(npy_root_dir, prefix)
     if prefix == 'val':
         prefix = 'e' + prefix
-    t_root = '/big/afang/kinetics_{}_numpy/'.format(prefix)
+    t_root = '{}/kinetics_{}_numpy/'.format(text_root_dir, prefix)
 
     paths = tqdm(glob.glob(root)) if view_progress else glob.glob(root)
 
@@ -240,141 +238,3 @@ def get_npy_paths(prefix, view_progress=False):
             t_paths.append(t_path)
 
     return a_paths, v_paths, t_paths
-
-
-if __name__ == '__main__':
-
-    # Code below is for experimenting with the methods above
-
-    # Load filepaths for Kinetics Validation set
-    dir = "/big/davidchan/kinetics/kinetics_val_clipped"
-    file_paths = []
-    for path in glob.glob(f'{dir}/*.mp4'):
-        file_paths.append(path)
-
-
-    dir = "/big/kinetics_audio/validate"
-    wav_paths = []
-    for path in glob.glob(f'{dir}/*/*.wav'):
-        wav_paths.append(path)
-
-    dir = '/big/afang/kinetics_eval_numpy'
-    text_paths = []
-    for path in glob.glob(f'{dir}/*.npy'):
-        text_paths.append(path)
-
-    wav_path = "/big/kinetics_audio/train/25_riding a bike/0->--JMdI8PKvsc.wav"
-    mp4_path = "/big/davidchan/kinetics/kinetics_train_clipped/-JMdI8PKvsc.mp4"
-    mp4_path = "/big/sgurram/kinetics_downsample/val/CIRUvo_OGv4.mp4"
-    mp4_path2 = "/big/davidchan/kinetics/kinetics_val_clipped/CIRUvo_OGv4.mp4"
-
-    # a1, s1 = get_audio_from_wav(wav_path)  
-
-    a1, s1 = get_audio_from_mp4(file_paths[128])  
-    a2, s2 = get_audio_from_mp4(file_paths[991])
-
-    # v1 = get_video_from_mp4(file_paths[27272]) 
-    # v2 = get_video_from_mp4(file_paths[2221])
-
-
-    # a1, s1 = get_audio_from_wav(wav_paths[3224])  
-    # a2, s2 = get_audio_from_wav(wav_paths[191])
-
-    a1 = a1.mean(dim=0).to(dtype=torch.float32)
-    a2 = a2.mean(dim=0).to(dtype=torch.float32)
-
-    a1 = torchaudio.transforms.MFCC(n_mfcc=128)(a1)[:, :2048]
-    a2 = torchaudio.transforms.MFCC(n_mfcc=128)(a2)[:, :2048]
-
-
-    model_path = "/home/sgurram/Desktop/video_lava/lava/389sgbrj/checkpoints/epoch=99.ckpt"
-    model = LAVA()
-    # model.load_state_dict(torch.load(model_path), strict=False)
-    af = model._audio_feature_model
-    vf = model._video_feature_model
-    model.eval()
-
-    s1 = af(a1.unsqueeze(0)).squeeze().detach()
-    s2 = af(a2.unsqueeze(0)).squeeze().detach()
-
-    # s1 = vf(v1.unsqueeze(0).to(dtype=torch.float32)).squeeze().detach()
-    # s2 = vf(v2.unsqueeze(0).to(dtype=torch.float32)).squeeze().detach()
-
-    # path = file_paths
-
-    # s1 = torch.from_numpy(np.load(text_paths[120]))
-    # s2 = torch.from_numpy(np.load(text_paths[11116]))
-
-    # _, s1 = get_audio_from_mp4(path[120])
-    # _, s2 = get_audio_from_mp4(path[11116])
-
-    # s1 = torch.flatten(get_video_from_mp4(path[120])).to(dtype=torch.float32).unsqueeze(0)
-    # s2 = torch.flatten(get_video_from_mp4(path[1116])).to(dtype=torch.float32).unsqueeze(0)
-
-    print(a1.shape)
-    print(a2.shape)
-    print(s1.shape)
-    print(s2.shape)
-    f = plt.figure()
-    f.add_subplot(2, 1, 1)
-    plt.imshow(s1)
-    f.add_subplot(2, 1, 2)
-    plt.imshow(s2)
-    plt.savefig('/home/sgurram/Desktop/audio_comparison.png')
-
-    # print(a1.mean())
-    # print(torch.min(a1))
-    # print(torch.max(a1))
-
-    # print(a2.mean())
-    # print(torch.min(a2))
-    # print(torch.max(a2))
-
-
-    print(torch.nn.CosineSimilarity()(a1, a2).mean())
-    print(torch.nn.CosineSimilarity()(s1, s2).mean())
-    # print(torch.nn.CosineSimilarity()(s1.t(), s2.t()).mean())
-
-    # print(get_audio_from_wav(path))
-
-    # embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder/4")
-    # a, v, t = get_lava_features(mp4_path=file_paths[4],
-    #                         wav_path=path,
-    #                         guse_model=embed)
-    # print(a.shape)
-    # print(v.shape)
-    # print(t.shape)
-
-    positive = ["this is my pet, a friendly little dog", "this is my pet, a friendly little puppy"]
-    negative = ["this is my pet, a friendly little dog", "launch the rocket to reach low-earth orbit and begin re-entry into the atmosphere"]
-
-    # pos = embed(positive)
-    # neg = embed(negative)
-
-    # p1, p2 = pos
-    # n1, n2 = neg
-    # print(cosine_similarity(p1, p2))
-    # print(cosine_similarity(n1, n2))
-
-    '''Evaluate Audiovisual Feature Extraction'''
-    # for path in tqdm(file_paths[:5]):
-    #     a, v = get_audiovisual(path)
-    #     print("Audio Features Shape: ", a.shape)
-    #     print("Video Features Shape: ", v.shape)
-
-    '''Verify Audiovisual Numpy Feature Files'''
-    # for path in tqdm(file_paths[:5]):
-    #     a_file, v_file = numpy_processing(path)
-    #     print("Audio Features Shape: ", np.load(a_file).shape)
-    #     print("Video Features Shape: ", np.load(v_file).shape)
-
-    '''Visualize Downsampled Video Frame'''
-    # path = file_paths[0]
-    # _, v = get_audiovisual(filepath)
-    # img = Image.fromarray(v[0], 'RGB')
-    # img.save('visualize_video_frame.png')
-
-    '''Visualize Spectrogram at Given Sampling Rate'''
-    # path = file_paths[0]
-    # a, _ = get_audiovisual(filepath)
-    # plt.savefig("visualize_spec.png")
