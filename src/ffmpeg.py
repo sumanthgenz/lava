@@ -1,0 +1,2 @@
+# ls | xargs -n 1 -P 16 -I{} ffmpeg -i /big/davidchan/kinetics/kinetics_train_clipped/{} -vf "fps=fps=10,scale='if(gte(iw,ih),-1,256):if(lt(iw,ih),256,-1)'" -c:a copy -strict -2 /big/sgurram/kinetics_res/train/{}
+# ls | xargs -n 1 -P 16 -I{} ffmpeg -i /big/davidchan/kinetics/kinetics_val_clipped/{} -vf "fps=fps=10,scale='if(gte(iw,ih),-1,256):if(lt(iw,ih),256,-1)'" -c:a copy -strict -2 /big/sgurram/kinetics_res/val/{}
